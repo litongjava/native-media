@@ -1,0 +1,1 @@
+add_library(native_media SHARED native_media.c)
