@@ -14,6 +14,13 @@ extern "C" {
  */
 JNIEXPORT jobjectArray JNICALL Java_com_litongjava_media_NativeMedia_splitMp3(JNIEnv *, jclass, jstring, jlong);
 
+/*
+ * Class:     com_litongjava_media_NativeMedia
+ * Method:    mp4ToMp3
+ * Signature: (Ljava/lang/String;)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_mp4ToMp3(JNIEnv *, jclass, jstring);
+
 #ifdef __cplusplus
 }
 #endif

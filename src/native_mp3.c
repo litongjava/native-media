@@ -32,7 +32,7 @@ int parse_mp3_frame(const unsigned char *header, MP3FrameInfo *info) {
   // Bitrate index
   int bitrate_index = (header[2] >> 4) & 0x0F;
   const int bitrate_table[16] = {
-    0,32,40,48,56,64,80,96,112,128,160,192,224,256,320,0
+    0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 0
   };
   info->bitrate = bitrate_table[bitrate_index] * 1000;
 
@@ -57,8 +57,8 @@ Java_com_litongjava_media_NativeMedia_splitMp3(JNIEnv *env, jclass clazz, jstrin
 
   // Prepare output filenames
   char base_path[1024];
-  strncpy(base_path, src_path, sizeof(base_path)-1);
-  base_path[sizeof(base_path)-1] = '\0';
+  strncpy(base_path, src_path, sizeof(base_path) - 1);
+  base_path[sizeof(base_path) - 1] = '\0';
 
   // Remove extension
   char *dot = strrchr(base_path, '.');
@@ -85,7 +85,7 @@ Java_com_litongjava_media_NativeMedia_splitMp3(JNIEnv *env, jclass clazz, jstrin
   size_t current_size = 0;
   FILE *output = NULL;
   char output_path[1024];
-  const size_t max_size = (size_t)size;
+  const size_t max_size = (size_t) size;
 
   // Frame reading buffer
   unsigned char header[4];
@@ -133,7 +133,7 @@ Java_com_litongjava_media_NativeMedia_splitMp3(JNIEnv *env, jclass clazz, jstrin
 
   for (int i = 0; i < split_count; i++) {
     char path[1024];
-    snprintf(path, sizeof(path), "%s_part%d.mp3", base_path, i+1);
+    snprintf(path, sizeof(path), "%s_part%d.mp3", base_path, i + 1);
     jstring str = (*env)->NewStringUTF(env, path);
     (*env)->SetObjectArrayElement(env, result, i, str);
     (*env)->DeleteLocalRef(env, str);
