@@ -128,6 +128,12 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_mp4ToMp3(JNIEnv 
     goto cleanup;
   }
 
+//  encoder = avcodec_find_encoder_by_name("libmp3lame");
+//  if (!encoder) {
+//    snprintf(error_buffer, sizeof(error_buffer), "Error: Could not find libmp3lame encoder");
+//    goto cleanup;
+//  }
+
   // Create a new audio stream in the output file
   audio_stream = avformat_new_stream(output_format_context, NULL);
   if (!audio_stream) {
