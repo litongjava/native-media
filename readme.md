@@ -41,10 +41,33 @@
 
 
 ## 构建
+
+```bash
+apt-get update
+apt-get install openjdk-11-jdk -y
+```
+
+同时，确保环境变量 `JAVA_HOME` 正确设置，例如：
+
+```bash
+export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+```
+
+安装完毕并设置好 `JAVA_HOME` 后，再次运行 CMake 配置命令，就应该能正确找到JNI，从而解决该错误。
+
+用动态链接方式构建 ffmpeg（包括 libmp3lame 支持）
 ```shell
-vcpkg install ffmpeg
+export VCPKG_LIBRARY_LINKAGE=dynamic
+vcpkg install ffmpeg[mp3lame]:x64-linux-dynamic
+```
+或者使用系统包管理器
+```shell
+sudo apt-get update
+sudo apt-get install libavcodec-dev libavformat-dev libavutil-dev libswresample-dev -y
+
 ```
 
 ```shell
-cmake --build cmake-build-debug --target all
+cmake -S . -B cmake-build-release -DCMAKE_BUILD_TYPE=Release
+cmake --build cmake-build-release --target all
 ```

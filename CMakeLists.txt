@@ -28,6 +28,8 @@ message(STATUS "SWRESAMPLE_LIBRARY: ${SWRESAMPLE_LIBRARY}")
 message(STATUS "AVUTIL_INCLUDE_DIR: ${AVUTIL_INCLUDE_DIR}")
 message(STATUS "AVUTIL_LIBRARY: ${AVUTIL_LIBRARY}")
 
+find_package(mp3lame CONFIG REQUIRED)
+
 # Include directories
 include_directories(
         ${AVCODEC_INCLUDE_DIR}
@@ -47,6 +49,7 @@ target_link_libraries(native_media
         ${AVFORMAT_LIBRARY}
         ${SWRESAMPLE_LIBRARY}
         ${AVUTIL_LIBRARY}
+        mp3lame::mp3lame
 )
 
 # Add test executable

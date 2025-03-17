@@ -122,17 +122,17 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_mp4ToMp3(JNIEnv 
   }
 
   // Find the MP3 encoder
-  encoder = avcodec_find_encoder(AV_CODEC_ID_MP3);
-  if (!encoder) {
-    snprintf(error_buffer, sizeof(error_buffer), "Error: Could not find MP3 encoder");
-    goto cleanup;
-  }
-
-//  encoder = avcodec_find_encoder_by_name("libmp3lame");
+//  encoder = avcodec_find_encoder(AV_CODEC_ID_MP3);
 //  if (!encoder) {
-//    snprintf(error_buffer, sizeof(error_buffer), "Error: Could not find libmp3lame encoder");
+//    snprintf(error_buffer, sizeof(error_buffer), "Error: Could not find MP3 encoder");
 //    goto cleanup;
 //  }
+
+  encoder = avcodec_find_encoder_by_name("libmp3lame");
+  if (!encoder) {
+    snprintf(error_buffer, sizeof(error_buffer), "Error: Could not find libmp3lame encoder");
+    goto cleanup;
+  }
 
   // Create a new audio stream in the output file
   audio_stream = avformat_new_stream(output_format_context, NULL);
@@ -151,8 +151,10 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_mp4ToMp3(JNIEnv 
   // Set encoder parameters
   encoder_context->sample_rate = decoder_context->sample_rate;
   encoder_context->bit_rate = 128000;  // 128kbps bitrate
-  //encoder_context->sample_fmt = AV_SAMPLE_FMT_S16P; // MP3 encoder typically uses s16p
-  encoder_context->sample_fmt = AV_SAMPLE_FMT_S16; // MP3 encoder supports s16
+  encoder_context->sample_fmt = AV_SAMPLE_FMT_S16P; // MP3 encoder typically uses s16p
+  // encoder_context->sample_fmt = AV_SAMPLE_FMT_S16; // MP3 encoder supports s16
+
+
 
 
   // Set up channel layout based on FFmpeg version

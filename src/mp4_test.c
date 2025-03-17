@@ -26,6 +26,11 @@ int main() {
 
   printf("Format context created successfully\n");
   avformat_free_context(fmt_ctx);
+  const AVCodec *encoder = NULL;
+  encoder = avcodec_find_encoder_by_name("libmp3lame");
+  if (!encoder) {
+    printf("Error: Could not find libmp3lame encoder");
+  }
 
   printf("Test completed successfully\n");
   return 0;
