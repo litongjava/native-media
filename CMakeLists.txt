@@ -32,9 +32,12 @@ message(STATUS "AVUTIL_LIBRARY: ${AVUTIL_LIBRARY}")
 if(WIN32)
     message(STATUS "Configuring for Windows")
     find_package(mp3lame CONFIG REQUIRED)
-else()
+elseif(APPLE)
+    message(STATUS "Configuring for macOS")
+elseif(UNIX)
     message(STATUS "Configuring for Linux/UNIX")
 endif()
+
 
 
 # Include directories
@@ -58,10 +61,13 @@ target_link_libraries(native_media
         ${AVUTIL_LIBRARY})
 
 if(WIN32)
-  target_link_libraries(native_media mp3lame::mp3lame)
-else()  # UNIX / Linux
-  target_link_libraries(native_media mp3lame)
+    target_link_libraries(native_media mp3lame::mp3lame)
+elseif(APPLE)
+
+elseif(UNIX)
+    target_link_libraries(native_media mp3lame)
 endif()
+
 
 
 
