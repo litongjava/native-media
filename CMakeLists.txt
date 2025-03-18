@@ -28,7 +28,14 @@ message(STATUS "SWRESAMPLE_LIBRARY: ${SWRESAMPLE_LIBRARY}")
 message(STATUS "AVUTIL_INCLUDE_DIR: ${AVUTIL_INCLUDE_DIR}")
 message(STATUS "AVUTIL_LIBRARY: ${AVUTIL_LIBRARY}")
 
-find_package(mp3lame CONFIG REQUIRED)
+# 检测操作系统类型
+if(WIN32)
+    message(STATUS "Configuring for Windows")
+    find_package(mp3lame CONFIG REQUIRED)
+else()
+    message(STATUS "Configuring for Linux/UNIX")
+endif()
+
 
 # Include directories
 include_directories(
@@ -48,9 +55,15 @@ target_link_libraries(native_media
         ${AVCODEC_LIBRARY}
         ${AVFORMAT_LIBRARY}
         ${SWRESAMPLE_LIBRARY}
-        ${AVUTIL_LIBRARY}
-        mp3lame::mp3lame
-)
+        ${AVUTIL_LIBRARY})
+
+if(WIN32)
+  target_link_libraries(native_media mp3lame::mp3lame)
+else()  # UNIX / Linux
+  target_link_libraries(native_media mp3lame)
+endif()
+
+
 
 # Add test executable
 add_executable(mp4_test src/mp4_test.c src/native_mp4.c)
