@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stringapiset.h>
 
 typedef struct {
   int version;
@@ -64,7 +65,16 @@ Java_com_litongjava_media_NativeMedia_splitMp3(JNIEnv *env, jclass clazz, jstrin
   char *dot = strrchr(base_path, '.');
   if (dot && strcasecmp(dot, ".mp3") == 0) *dot = '\0';
 
+#ifdef _WIN32
+  int wlen = MultiByteToWideChar(CP_UTF8, 0, src_path, -1, NULL, 0);
+  wchar_t *wsrc_path = malloc(wlen * sizeof(wchar_t));
+  MultiByteToWideChar(CP_UTF8, 0, src_path, -1, wsrc_path, wlen);
+  FILE *input = _wfopen(wsrc_path, L"rb");
+  free(wsrc_path);
+#else
   FILE *input = fopen(src_path, "rb");
+#endif
+
   if (!input) {
     (*env)->ReleaseStringUTFChars(env, srcPath, src_path);
     return NULL;
@@ -106,7 +116,15 @@ Java_com_litongjava_media_NativeMedia_splitMp3(JNIEnv *env, jclass clazz, jstrin
       if (output) fclose(output);
       split_count++;
       snprintf(output_path, sizeof(output_path), "%s_part%d.mp3", base_path, split_count);
+#ifdef _WIN32
+      int wlen = MultiByteToWideChar(CP_UTF8, 0, output_path, -1, NULL, 0);
+      wchar_t *woutput_path = malloc(wlen * sizeof(wchar_t));
+      MultiByteToWideChar(CP_UTF8, 0, output_path, -1, woutput_path, wlen);
+      output = _wfopen(woutput_path, L"wb");
+      free(woutput_path);
+#else
       output = fopen(output_path, "wb");
+#endif
       if (!output) break;
       current_size = 0;
     }
