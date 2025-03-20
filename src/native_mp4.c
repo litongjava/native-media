@@ -11,6 +11,7 @@
 #include <libavutil/opt.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
+#include <stringapiset.h>
 
 JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_mp4ToMp3(JNIEnv *env, jclass clazz, jstring inputPath) {
   // Convert Java string to C string
@@ -59,11 +60,34 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_mp4ToMp3(JNIEnv 
   jstring result = NULL;
 
   // Open input file
-  if ((ret = avformat_open_input(&input_format_context, input_file, NULL, NULL)) < 0) {
+#ifdef _WIN32
+  int wlen = MultiByteToWideChar(CP_UTF8, 0, input_file, -1, NULL, 0);
+  wchar_t *winput_file = malloc(wlen * sizeof(wchar_t));
+  if (winput_file) {
+    MultiByteToWideChar(CP_UTF8, 0, input_file, -1, winput_file, wlen);
+    int len = WideCharToMultiByte(CP_ACP, 0, winput_file, -1, NULL, 0, NULL, NULL);
+    char *local_input_file = malloc(len);
+    if (local_input_file) {
+      WideCharToMultiByte(CP_ACP, 0, winput_file, -1, local_input_file, len, NULL, NULL);
+      ret = avformat_open_input(&input_format_context, local_input_file, NULL, NULL);
+      free(local_input_file);
+    } else {
+      ret = -1;
+    }
+    free(winput_file);
+  } else {
+    ret = -1;
+  }
+#else
+  ret = avformat_open_input(&input_format_context, input_file, NULL, NULL);
+#endif
+
+  if (ret < 0) {
     av_strerror(ret, error_buffer, sizeof(error_buffer));
     snprintf(error_buffer, sizeof(error_buffer), "Error: Could not open input file: %s", error_buffer);
     goto cleanup;
   }
+
 
   // Find stream info
   if ((ret = avformat_find_stream_info(input_format_context, NULL)) < 0) {
@@ -227,11 +251,34 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_mp4ToMp3(JNIEnv 
 
   // Open output file for writing
   if (!(output_format_context->oformat->flags & AVFMT_NOFILE)) {
-    if ((ret = avio_open(&output_format_context->pb, output_file, AVIO_FLAG_WRITE)) < 0) {
+#ifdef _WIN32
+    int wlen = MultiByteToWideChar(CP_UTF8, 0, output_file, -1, NULL, 0);
+    wchar_t *woutput_file = malloc(wlen * sizeof(wchar_t));
+    if (woutput_file) {
+      MultiByteToWideChar(CP_UTF8, 0, output_file, -1, woutput_file, wlen);
+      int len = WideCharToMultiByte(CP_ACP, 0, woutput_file, -1, NULL, 0, NULL, NULL);
+      char *local_output_file = malloc(len);
+      if (local_output_file) {
+        WideCharToMultiByte(CP_ACP, 0, woutput_file, -1, local_output_file, len, NULL, NULL);
+        ret = avio_open(&output_format_context->pb, local_output_file, AVIO_FLAG_WRITE);
+        free(local_output_file);
+      } else {
+        ret = -1;
+      }
+      free(woutput_file);
+    } else {
+      ret = -1;
+    }
+#else
+    ret = avio_open(&output_format_context->pb, output_file, AVIO_FLAG_WRITE);
+#endif
+
+    if (ret < 0) {
       av_strerror(ret, error_buffer, sizeof(error_buffer));
       snprintf(error_buffer, sizeof(error_buffer), "Error: Could not open output file: %s", error_buffer);
       goto cleanup;
     }
+
   }
 
   // Write file header
