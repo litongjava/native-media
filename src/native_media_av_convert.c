@@ -167,7 +167,8 @@ Java_com_litongjava_media_NativeMedia_convertTo(JNIEnv *env, jclass clazz, jstri
   }
 
   // 查找音频解码器
-  AVCodec *decoder = avcodec_find_decoder(input_format_context->streams[audio_stream_index]->codecpar->codec_id);
+  //AVCodec *decoder = avcodec_find_decoder(input_format_context->streams[audio_stream_index]->codecpar->codec_id);
+  const AVCodec *decoder = avcodec_find_decoder(input_format_context->streams[audio_stream_index]->codecpar->codec_id);
   if (!decoder) {
     snprintf(error_buffer, sizeof(error_buffer), "Error: Could not find decoder");
     goto cleanup;
