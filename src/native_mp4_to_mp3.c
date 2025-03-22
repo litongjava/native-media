@@ -140,15 +140,15 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_mp4ToMp3(JNIEnv 
     int input_channels = audio_stream_in->codecpar->ch_layout.nb_channels;
 #endif
 
-    int sample_rate = audio_stream_in->codecpar->sample_rate;
-    printf("Input Audio Info:\n");
-    printf("  Duration: %.2f seconds\n", duration_sec);
-    printf("  Sample Rate: %d\n", sample_rate);
-    printf("  Channels: %d\n", input_channels);
     // 计算理论输出文件大小，128kbps -> 128000 bps，每秒生成 128000/8 字节
-    double theoretical_size_bytes = (128000.0 * duration_sec) / 8.0;
-    double theoretical_size_MB = theoretical_size_bytes / (1024.0 * 1024.0);
-    printf("Theoretical output file size at 128kbps: %.2f MB\n", theoretical_size_MB);
+    int sample_rate = audio_stream_in->codecpar->sample_rate;
+//    printf("Input Audio Info:\n");
+//    printf("  Duration: %.2f seconds\n", duration_sec);
+//    printf("  Sample Rate: %d\n", sample_rate);
+//    printf("  Channels: %d\n", input_channels);
+//    double theoretical_size_bytes = (128000.0 * duration_sec) / 8.0;
+//    double theoretical_size_MB = theoretical_size_bytes / (1024.0 * 1024.0);
+//    printf("Theoretical output file size at 128kbps: %.2f MB\n", theoretical_size_MB);
   }
 
   // 查找音频解码器
