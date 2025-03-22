@@ -3,7 +3,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
 #include <stringapiset.h>
+#endif
 
 typedef struct {
   int version;

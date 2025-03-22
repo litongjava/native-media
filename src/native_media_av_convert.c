@@ -12,7 +12,9 @@
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
 #include <libavutil/audio_fifo.h>
+#ifdef _WIN32
 #include <stringapiset.h>
+#endif
 
 JNIEXPORT jstring JNICALL
 Java_com_litongjava_media_NativeMedia_convertTo(JNIEnv *env, jclass clazz, jstring inputPath, jstring targetFormat) {

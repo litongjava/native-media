@@ -11,7 +11,9 @@
 #include <libavutil/opt.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
+#ifdef _WIN32
 #include <stringapiset.h>
+#endif
 
 JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_mp4ToMp3(JNIEnv *env, jclass clazz, jstring inputPath) {
   // Convert Java string to C string
