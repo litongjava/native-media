@@ -50,7 +50,8 @@ include_directories(
 )
 
 # Add sources
-add_library(native_media SHARED src/native_mp3_split.c src/native_mp4.c src/native_media.c src/native_mp3.c)
+add_library(native_media SHARED src/native_mp3_split.c src/native_mp4.c src/native_media_support_format.c src/native_mp3.c
+        src/native_media_av.c)
 
 # Link libraries
 target_link_libraries(native_media

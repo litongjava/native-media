@@ -33,6 +33,14 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3
 
 /*
  * Class:     com_litongjava_media_NativeMedia
+ * Method:    convertTo
+ * Signature: (Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_convertTo
+  (JNIEnv *, jclass, jstring, jstring);
+
+/*
+ * Class:     com_litongjava_media_NativeMedia
  * Method:    supportFormats
  * Signature: ()[Ljava/lang/String;
  */
