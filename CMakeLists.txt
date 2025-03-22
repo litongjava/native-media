@@ -50,7 +50,7 @@ include_directories(
 )
 
 # Add sourcesa
-add_library(native_media SHARED src/native_mp3_split.c src/native_mp4.c src/native_media_support_format.c src/native_mp3.c
+add_library(native_media SHARED src/native_mp3_split.c src/native_mp4_to_mp3.c src/native_media_support_format.c src/native_mp3.c
         src/native_media_av_convert.c src/native_media_av_split.c)
 
 # Link libraries
@@ -73,7 +73,7 @@ endif()
 
 
 # Add test executable
-add_executable(mp4_test src/mp4_test.c src/native_mp4.c)
+add_executable(mp4_test src/mp4_test.c src/native_mp4_to_mp3.c)
 target_link_libraries(mp4_test
         ${AVCODEC_LIBRARY}
         ${AVFORMAT_LIBRARY}
