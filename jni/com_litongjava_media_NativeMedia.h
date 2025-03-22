@@ -41,6 +41,14 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_convertTo
 
 /*
  * Class:     com_litongjava_media_NativeMedia
+ * Method:    split
+ * Signature: (Ljava/lang/String;J)[Ljava/lang/String;
+ */
+JNIEXPORT jobjectArray JNICALL Java_com_litongjava_media_NativeMedia_split
+  (JNIEnv *, jclass, jstring, jlong);
+
+/*
+ * Class:     com_litongjava_media_NativeMedia
  * Method:    supportFormats
  * Signature: ()[Ljava/lang/String;
  */

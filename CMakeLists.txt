@@ -49,9 +49,9 @@ include_directories(
         jni
 )
 
-# Add sources
+# Add sourcesa
 add_library(native_media SHARED src/native_mp3_split.c src/native_mp4.c src/native_media_support_format.c src/native_mp3.c
-        src/native_media_av.c)
+        src/native_media_av_convert.c src/native_media_av_split.c)
 
 # Link libraries
 target_link_libraries(native_media
