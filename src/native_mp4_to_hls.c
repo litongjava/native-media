@@ -3,186 +3,250 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #ifdef _WIN32
-
 #include <windows.h>
-
 #endif
 
-// FFmpeg 相关头文件（如果需要真实实现 HLS 分段请使用 FFmpeg API）
+// FFmpeg header files (ensure the FFmpeg development environment is properly configured)
 #include <libavformat/avformat.h>
-#include <libavcodec/avcodec.h>
-#include <libswresample/swresample.h>
+#include <libavutil/avutil.h>
 #include <libavutil/opt.h>
-#include <libavutil/channel_layout.h>
-#include <libavutil/samplefmt.h>
-#include <libavutil/audio_fifo.h>
 
 /**
- * 模拟使用 FFmpeg/ native‑media 库将 MP4 转换为 HLS 分段
- * 实际实现时，请调用对应的 native‑media 接口进行处理
- *
- * 此处仅模拟生成若干 TS 分段文件名，真实逻辑中应分段并写 TS 文件
+ * Helper function: Convert FFmpeg error code to a string
  */
-static int simulate_split_mp4_to_hls(const char *inputMp4Path,
-                                     const char *tsPattern,
-                                     int sceneIndex,
-                                     int segmentDuration,
-                                     char ***outSegments,
-                                     int *outCount) {
-  // 模拟分段数量
-  int segCount = 3;
-  char **segments = (char **) malloc(sizeof(char *) * segCount);
-  if (!segments) {
-    return -1;
-  }
-  for (int i = 0; i < segCount; i++) {
-    segments[i] = (char *) malloc(256);
-    if (!segments[i]) {
-      // 释放已分配内存
-      for (int j = 0; j < i; j++) {
-        free(segments[j]);
-      }
-      free(segments);
-      return -1;
-    }
-    // 根据 tsPattern 模板生成 TS 文件名，sceneIndex 为起始编号
-    // 例如 tsPattern 为 "C:/videos/segment_%d.ts"
-    sprintf(segments[i], tsPattern, sceneIndex + i);
-    // 此处应调用 native‑media/FFmpeg 进行真实分段，并写 TS 文件到磁盘
-  }
-  *outSegments = segments;
-  *outCount = segCount;
-  return 0;
+static void print_error(const char *msg, int errnum) {
+  char errbuf[128] = {0};
+  av_strerror(errnum, errbuf, sizeof(errbuf));
+  fprintf(stderr, "%s: %s\n", msg, errbuf);
 }
 
-JNIEXPORT jstring JNICALL
-Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JNIEnv *env, jclass clazz,
-                                                    jstring playlistUrlJ,
-                                                    jstring inputMp4PathJ,
-                                                    jstring tsPatternJ,
-                                                    jint sceneIndex,
-                                                    jint segmentDuration) {
-  // 1. 获取 Java 传入的字符串参数
+/**
+ * JNI method implementation:
+ * Java declaration:
+ *   public static native String splitMp4ToHLS(String playlistUrl, String inputMp4Path, String tsPattern, int sceneIndex, int segmentDuration);
+ *
+ * Real implementation steps:
+ *   1. Open the input MP4 file and retrieve stream information.
+ *   2. Allocate an output AVFormatContext using the "hls" muxer, with the output URL specified as playlistUrl.
+ *   3. Set HLS options:
+ *         - hls_time: segment duration
+ *         - start_number: starting segment number (sceneIndex)
+ *         - hls_segment_filename: TS segment file naming template (including directory)
+ *         - hls_flags=append_list: append if the playlist already exists
+ *         - hls_list_size=0: do not limit the playlist length
+ *         - hls_playlist_type=event: avoid writing EXT‑X‑ENDLIST to allow future appending
+ *   4. Create an output stream for each input stream (using copy mode).
+ *   5. Open the output file (if required) and write the header.
+ *   6. Read input packets, adjust timestamps, and write to the output to complete the segmentation.
+ *   7. Write trailer and release resources.
+ *   8. Return a feedback message.
+ */
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JNIEnv *env, jclass clazz,
+                                                                              jstring playlistUrlJ,
+                                                                              jstring inputMp4PathJ, jstring tsPatternJ,
+                                                                              jint sceneIndex, jint segmentDuration) {
+
+  int ret = 0;
+  AVFormatContext *ifmt_ctx = NULL;
+  AVFormatContext *ofmt_ctx = NULL;
+  AVDictionary *opts = NULL;
+  int *stream_mapping = NULL;
+  int stream_mapping_size = 0;
+  AVPacket pkt;
+
+  // Retrieve JNI string parameters (all in UTF-8 encoding)
   const char *playlistUrl = (*env)->GetStringUTFChars(env, playlistUrlJ, NULL);
   const char *inputMp4Path = (*env)->GetStringUTFChars(env, inputMp4PathJ, NULL);
   const char *tsPattern = (*env)->GetStringUTFChars(env, tsPatternJ, NULL);
 
-  // 2. 使用 native‑media/FFmpeg 接口将 MP4 分段转换为 HLS
-  char **segmentFiles = NULL;
-  int segmentCount = 0;
-  if (simulate_split_mp4_to_hls(inputMp4Path, tsPattern, sceneIndex, segmentDuration,
-                                &segmentFiles, &segmentCount) != 0) {
-    (*env)->ReleaseStringUTFChars(env, playlistUrlJ, playlistUrl);
-    (*env)->ReleaseStringUTFChars(env, inputMp4PathJ, inputMp4Path);
-    (*env)->ReleaseStringUTFChars(env, tsPatternJ, tsPattern);
-    return (*env)->NewStringUTF(env, "HLS 分段转换失败");
-  }
-
-  // 3. 根据 TS 分段信息构造 m3u8 片段
-  // 每个分段格式：#EXTINF:<duration>,\n<ts_filename>\n
-  char m3u8Snippet[4096] = {0};
-  for (int i = 0; i < segmentCount; i++) {
-    char line[512] = {0};
-    snprintf(line, sizeof(line), "#EXTINF:%d,\n%s\n", segmentDuration, segmentFiles[i]);
-    strcat(m3u8Snippet, line);
-  }
-
-  // 4. 打开播放列表文件，注意：如果文件中已经存在 "#EXT-X-ENDLIST"，则不能追加
-  FILE *playlistFile = NULL;
-#ifdef _WIN32
-  // Windows 环境下需要转换 UTF-8 路径到宽字符
-  int size_needed = MultiByteToWideChar(CP_UTF8, 0, playlistUrl, -1, NULL, 0);
-  wchar_t *wplaylistUrl = (wchar_t *) malloc(size_needed * sizeof(wchar_t));
-  if (wplaylistUrl == NULL) {
-    // 内存分配失败，释放资源后返回
-    goto cleanup_fail;
-  }
-  MultiByteToWideChar(CP_UTF8, 0, playlistUrl, -1, wplaylistUrl, size_needed);
-  playlistFile = _wfopen(wplaylistUrl, L"r+");
-  free(wplaylistUrl);
-#else
-  playlistFile = fopen(playlistUrl, "r+");
-#endif
-
-  if (playlistFile == NULL) {
-    // 如果文件不存在则创建
+  // Check if the playlist file already contains EXT-X-ENDLIST (appending is not allowed)
+  {
+    FILE *checkFile = NULL;
 #ifdef _WIN32
     int size_needed = MultiByteToWideChar(CP_UTF8, 0, playlistUrl, -1, NULL, 0);
-    wchar_t *wplaylistUrl = (wchar_t *) malloc(size_needed * sizeof(wchar_t));
-    if (wplaylistUrl == NULL) {
-      goto cleanup_fail;
+    wchar_t *wPlaylistUrl = (wchar_t *) malloc(size_needed * sizeof(wchar_t));
+    if (wPlaylistUrl) {
+      MultiByteToWideChar(CP_UTF8, 0, playlistUrl, -1, wPlaylistUrl, size_needed);
+      checkFile = _wfopen(wPlaylistUrl, L"r");
+      free(wPlaylistUrl);
     }
-    MultiByteToWideChar(CP_UTF8, 0, playlistUrl, -1, wplaylistUrl, size_needed);
-    playlistFile = _wfopen(wplaylistUrl, L"w+");
-    free(wplaylistUrl);
 #else
-    playlistFile = fopen(playlistUrl, "w+");
+    checkFile = fopen(playlistUrl, "r");
 #endif
-    if (playlistFile == NULL) {
-      goto cleanup_fail;
+    if (checkFile) {
+      fseek(checkFile, 0, SEEK_END);
+      long size = ftell(checkFile);
+      fseek(checkFile, 0, SEEK_SET);
+      char *content = (char *) malloc(size + 1);
+      if (content) {
+        fread(content, 1, size, checkFile);
+        content[size] = '\0';
+        if (strstr(content, "#EXT-X-ENDLIST") != NULL) {
+          fclose(checkFile);
+          free(content);
+          (*env)->ReleaseStringUTFChars(env, playlistUrlJ, playlistUrl);
+          (*env)->ReleaseStringUTFChars(env, inputMp4PathJ, inputMp4Path);
+          (*env)->ReleaseStringUTFChars(env, tsPatternJ, tsPattern);
+          return (*env)->NewStringUTF(env, "Playlist already contains #EXT-X-ENDLIST, cannot append");
+        }
+        free(content);
+      }
+      fclose(checkFile);
     }
   }
 
-  // 检查播放列表内容中是否包含 "#EXT-X-ENDLIST"
-  fseek(playlistFile, 0, SEEK_END);
-  long fileSize = ftell(playlistFile);
-  fseek(playlistFile, 0, SEEK_SET);
-  char *fileContent = (char *) malloc(fileSize + 1);
-  if (fileContent == NULL) {
-    fclose(playlistFile);
-    goto cleanup_fail;
+  // Initialize FFmpeg (newer versions do not require av_register_all)
+  // Open the input MP4 file
+  if ((ret = avformat_open_input(&ifmt_ctx, inputMp4Path, NULL, NULL)) < 0) {
+    print_error("Unable to open input file", ret);
+    goto end;
   }
-  fread(fileContent, 1, fileSize, playlistFile);
-  fileContent[fileSize] = '\0';
+  if ((ret = avformat_find_stream_info(ifmt_ctx, NULL)) < 0) {
+    print_error("Unable to retrieve stream info", ret);
+    goto end;
+  }
 
-  if (strstr(fileContent, "#EXT-X-ENDLIST") != NULL) {
-    // 如果已结束则不能追加
-    free(fileContent);
-    fclose(playlistFile);
-    // 释放 TS 分段文件名内存
-    for (int i = 0; i < segmentCount; i++) {
-      free(segmentFiles[i]);
+  // Allocate output context using the hls muxer, with output URL specified as playlistUrl
+  ret = avformat_alloc_output_context2(&ofmt_ctx, NULL, "hls", playlistUrl);
+  if (ret < 0 || !ofmt_ctx) {
+    print_error("Unable to allocate output context", ret);
+    goto end;
+  }
+
+  // Set HLS options (to be passed to avformat_write_header)
+  {
+    char seg_time_str[16] = {0};
+    snprintf(seg_time_str, sizeof(seg_time_str), "%d", segmentDuration);
+    av_dict_set(&opts, "hls_time", seg_time_str, 0);
+
+    char start_num_str[16] = {0};
+    snprintf(start_num_str, sizeof(start_num_str), "%d", sceneIndex);
+    av_dict_set(&opts, "start_number", start_num_str, 0);
+
+    // Use the provided tsPattern as the TS segment file naming template
+    av_dict_set(&opts, "hls_segment_filename", tsPattern, 0);
+
+    // Set append mode, unlimited playlist, and event type (to prevent writing EXT-X-ENDLIST)
+    av_dict_set(&opts, "hls_flags", "append_list", 0);
+    av_dict_set(&opts, "hls_list_size", "0", 0);
+    av_dict_set(&opts, "hls_playlist_type", "event", 0);
+  }
+
+  // Create an output stream for each input stream (copy mode)
+  stream_mapping_size = ifmt_ctx->nb_streams;
+  stream_mapping = av_malloc_array(stream_mapping_size, sizeof(int));
+  if (!stream_mapping) {
+    ret = AVERROR(ENOMEM);
+    goto end;
+  }
+  for (int i = 0, j = 0; i < ifmt_ctx->nb_streams; i++) {
+    AVStream *in_stream = ifmt_ctx->streams[i];
+    AVCodecParameters *in_codecpar = in_stream->codecpar;
+    // Only copy video, audio, or subtitle streams (filter as needed)
+    if (in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
+        in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
+        in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE) {
+      stream_mapping[i] = -1;
+      continue;
     }
-    free(segmentFiles);
-    (*env)->ReleaseStringUTFChars(env, playlistUrlJ, playlistUrl);
-    (*env)->ReleaseStringUTFChars(env, inputMp4PathJ, inputMp4Path);
-    (*env)->ReleaseStringUTFChars(env, tsPatternJ, tsPattern);
-    return (*env)->NewStringUTF(env, "播放列表已包含 #EXT-X-ENDLIST，不可追加");
+    stream_mapping[i] = j++;
+    AVStream *out_stream = avformat_new_stream(ofmt_ctx, NULL);
+    if (!out_stream) {
+      ret = AVERROR_UNKNOWN;
+      goto end;
+    }
+    ret = avcodec_parameters_copy(out_stream->codecpar, in_codecpar);
+    if (ret < 0) {
+      print_error("Failed to copy codec parameters", ret);
+      goto end;
+    }
+    out_stream->codecpar->codec_tag = 0;
+    // Set the time base to that of the input stream (to avoid timestamp errors)
+    out_stream->time_base = in_stream->time_base;
   }
-  free(fileContent);
 
-  // 追加 m3u8 片段
-  fseek(playlistFile, 0, SEEK_END);
-  if (fwrite(m3u8Snippet, 1, strlen(m3u8Snippet), playlistFile) != strlen(m3u8Snippet)) {
-    fclose(playlistFile);
-    goto cleanup_fail;
+  // Open the output file (if required by the output format)
+  if (!(ofmt_ctx->oformat->flags & AVFMT_NOFILE)) {
+#ifdef _WIN32
+    int size_needed = MultiByteToWideChar(CP_UTF8, 0, playlistUrl, -1, NULL, 0);
+    wchar_t *wPlaylistUrl = (wchar_t *) malloc(size_needed * sizeof(wchar_t));
+    if (wPlaylistUrl) {
+      MultiByteToWideChar(CP_UTF8, 0, playlistUrl, -1, wPlaylistUrl, size_needed);
+      ret = avio_open(&ofmt_ctx->pb, wPlaylistUrl, AVIO_FLAG_WRITE);
+      free(wPlaylistUrl);
+    }
+#else
+    ret = avio_open(&ofmt_ctx->pb, playlistUrl, AVIO_FLAG_WRITE);
+#endif
+    if (ret < 0) {
+      print_error("Unable to open output file", ret);
+      goto end;
+    }
   }
-  fclose(playlistFile);
 
-  // 释放 TS 分段生成时申请的内存
-  for (int i = 0; i < segmentCount; i++) {
-    free(segmentFiles[i]);
+  // Write the header (the output muxer will generate TS files and update the playlist based on the provided options)
+  ret = avformat_write_header(ofmt_ctx, &opts);
+  if (ret < 0) {
+    print_error("Failed to write header", ret);
+    goto end;
   }
-  free(segmentFiles);
 
+  // Start reading packets from the input file and writing them to the output muxer (the hls muxer automatically handles real-time segmentation)
+  while (av_read_frame(ifmt_ctx, &pkt) >= 0) {
+    if (pkt.stream_index >= ifmt_ctx->nb_streams ||
+        stream_mapping[pkt.stream_index] < 0) {
+      av_packet_unref(&pkt);
+      continue;
+    }
+    // Retrieve input and output streams
+    AVStream *in_stream = ifmt_ctx->streams[pkt.stream_index];
+    AVStream *out_stream = ofmt_ctx->streams[stream_mapping[pkt.stream_index]];
+
+    // Convert timestamps
+    pkt.pts = av_rescale_q_rnd(pkt.pts, in_stream->time_base, out_stream->time_base,
+                               AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
+    pkt.dts = av_rescale_q_rnd(pkt.dts, in_stream->time_base, out_stream->time_base,
+                               AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
+    pkt.duration = av_rescale_q(pkt.duration, in_stream->time_base, out_stream->time_base);
+    pkt.pos = -1;
+    pkt.stream_index = stream_mapping[pkt.stream_index];
+
+    ret = av_interleaved_write_frame(ofmt_ctx, &pkt);
+    if (ret < 0) {
+      print_error("Failed to write packet", ret);
+      break;
+    }
+    av_packet_unref(&pkt);
+  }
+
+  // Note: Not calling av_write_trailer will prevent the muxer from writing EXT-X-ENDLIST, thus allowing subsequent appending
+  // av_write_trailer(ofmt_ctx);
+
+  end:
+  if (stream_mapping)
+    av_freep(&stream_mapping);
+  if (ifmt_ctx)
+    avformat_close_input(&ifmt_ctx);
+  if (ofmt_ctx) {
+    if (!(ofmt_ctx->oformat->flags & AVFMT_NOFILE))
+      avio_closep(&ofmt_ctx->pb);
+    avformat_free_context(ofmt_ctx);
+  }
+  av_dict_free(&opts);
+
+  // Release JNI strings
   (*env)->ReleaseStringUTFChars(env, playlistUrlJ, playlistUrl);
   (*env)->ReleaseStringUTFChars(env, inputMp4PathJ, inputMp4Path);
   (*env)->ReleaseStringUTFChars(env, tsPatternJ, tsPattern);
 
-  return (*env)->NewStringUTF(env, "HLS 分段及播放列表更新成功");
-
-  cleanup_fail:
-  if (segmentFiles) {
-    for (int i = 0; i < segmentCount; i++) {
-      if (segmentFiles[i])
-        free(segmentFiles[i]);
-    }
-    free(segmentFiles);
+  if (ret < 0) {
+    return (*env)->NewStringUTF(env, "HLS segmentation failed");
+  } else {
+    char resultMsg[256] = {0};
+    snprintf(resultMsg, sizeof(resultMsg), "HLS segmentation successful: generated new segments and appended to playlist %s", playlistUrl);
+    return (*env)->NewStringUTF(env, resultMsg);
   }
-  (*env)->ReleaseStringUTFChars(env, playlistUrlJ, playlistUrl);
-  (*env)->ReleaseStringUTFChars(env, inputMp4PathJ, inputMp4Path);
-  (*env)->ReleaseStringUTFChars(env, tsPatternJ, tsPattern);
-  return (*env)->NewStringUTF(env, "HLS 分段处理失败");
 }
