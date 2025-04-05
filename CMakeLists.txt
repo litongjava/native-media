@@ -29,15 +29,14 @@ message(STATUS "AVUTIL_INCLUDE_DIR: ${AVUTIL_INCLUDE_DIR}")
 message(STATUS "AVUTIL_LIBRARY: ${AVUTIL_LIBRARY}")
 
 # 检测操作系统类型
-if(WIN32)
+if (WIN32)
     message(STATUS "Configuring for Windows")
     find_package(mp3lame CONFIG REQUIRED)
-elseif(APPLE)
+elseif (APPLE)
     message(STATUS "Configuring for macOS")
-elseif(UNIX)
+elseif (UNIX)
     message(STATUS "Configuring for Linux/UNIX")
-endif()
-
+endif ()
 
 
 # Include directories
@@ -51,7 +50,7 @@ include_directories(
 
 # Add sourcesa
 add_library(native_media SHARED src/native_mp3_split.c src/native_mp4_to_mp3.c src/native_media_support_format.c src/native_mp3.c
-        src/native_media_av_convert.c src/native_media_av_split.c)
+        src/native_media_av_convert.c src/native_media_av_split.c src/native_mp4_to_hls.c)
 
 # Link libraries
 target_link_libraries(native_media
@@ -61,15 +60,13 @@ target_link_libraries(native_media
         ${SWRESAMPLE_LIBRARY}
         ${AVUTIL_LIBRARY})
 
-if(WIN32)
+if (WIN32)
     target_link_libraries(native_media mp3lame::mp3lame)
-elseif(APPLE)
+elseif (APPLE)
 
-elseif(UNIX)
+elseif (UNIX)
     target_link_libraries(native_media mp3lame)
-endif()
-
-
+endif ()
 
 
 # Add test executable

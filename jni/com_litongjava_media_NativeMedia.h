@@ -55,6 +55,14 @@ JNIEXPORT jobjectArray JNICALL Java_com_litongjava_media_NativeMedia_split
 JNIEXPORT jobjectArray JNICALL Java_com_litongjava_media_NativeMedia_supportFormats
   (JNIEnv *, jclass);
 
+/*
+ * Class:     com_litongjava_media_NativeMedia
+ * Method:    splitMp4ToHLS
+ * Signature: (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;II)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS
+  (JNIEnv *, jclass, jstring, jstring, jstring, jint, jint);
+
 #ifdef __cplusplus
 }
 #endif
