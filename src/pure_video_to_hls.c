@@ -1,22 +1,22 @@
-#include "com_litongjava_media_NativeMedia.h"
-#include <jni.h>
+// pure_mp4_to_hls.c
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
-// FFmpeg header files (ensure the FFmpeg development environment is properly configured)
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/opt.h>
+#include "native_media.h"
 
-/**
- * Helper function: Convert FFmpeg error code to a string
- */
+#ifdef _WIN32
+
+#include <windows.h>
+
+#endif
+
+// 辅助函数：打印 FFmpeg 错误信息
 static void print_error(const char *msg, int errnum) {
   char errbuf[128] = {0};
   av_strerror(errnum, errbuf, sizeof(errbuf));
@@ -24,31 +24,18 @@ static void print_error(const char *msg, int errnum) {
 }
 
 /**
- * JNI method implementation:
- * Java declaration:
- *   public static native String splitMp4ToHLS(String playlistUrl, String inputMp4Path, String tsPattern, int sceneIndex, int segmentDuration);
+ * 纯 C 接口：将 MP4 文件转换为 HLS 分段
  *
- * Real implementation steps:
- *   1. Open the input MP4 file and retrieve stream information.
- *   2. Allocate an output AVFormatContext using the "hls" muxer, with the output URL specified as playlistUrl.
- *   3. Set HLS options:
- *         - hls_time: segment duration
- *         - start_number: starting segment number (sceneIndex)
- *         - hls_segment_filename: TS segment file naming template (including directory)
- *         - hls_flags=append_list: append if the playlist already exists
- *         - hls_list_size=0: do not limit the playlist length
- *         - hls_playlist_type=event: avoid writing EXT‑X‑ENDLIST to allow future appending
- *   4. Create an output stream for each input stream (using copy mode).
- *   5. Open the output file (if required) and write the header.
- *   6. Read input packets, adjust timestamps, and write to the output to complete the segmentation.
- *   7. Write trailer and release resources.
- *   8. Return a feedback message.
+ * @param playlistUrl     播放列表文件路径（或 URL）
+ * @param inputMp4Path    输入 MP4 文件路径
+ * @param tsPattern       TS 分段文件命名模板（含完整路径），例如 "segment_%03d.ts"
+ * @param segmentDuration TS 分段的时长（秒）
+ * @param sceneIndex      分段起始编号
+ *
+ * @return 返回处理结果的描述字符串
  */
-JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JNIEnv *env, jclass clazz,
-                                                                              jstring playlistUrlJ,
-                                                                              jstring inputMp4PathJ, jstring tsPatternJ,
-                                                                              jint sceneIndex, jint segmentDuration) {
-
+const char *split_video_to_hls(const char *playlistUrl, const char *inputMp4Path,
+                               const char *tsPattern, int segmentDuration) {
   int ret = 0;
   AVFormatContext *ifmt_ctx = NULL;
   AVFormatContext *ofmt_ctx = NULL;
@@ -57,12 +44,7 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JN
   int stream_mapping_size = 0;
   AVPacket pkt;
 
-  // Retrieve JNI string parameters (all in UTF-8 encoding)
-  const char *playlistUrl = (*env)->GetStringUTFChars(env, playlistUrlJ, NULL);
-  const char *inputMp4Path = (*env)->GetStringUTFChars(env, inputMp4PathJ, NULL);
-  const char *tsPattern = (*env)->GetStringUTFChars(env, tsPatternJ, NULL);
-
-  // Check if the playlist file already contains EXT-X-ENDLIST (appending is not allowed)
+  // 检查播放列表文件是否已经含有 "#EXT-X-ENDLIST"
   {
     FILE *checkFile = NULL;
 #ifdef _WIN32
@@ -87,10 +69,7 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JN
         if (strstr(content, "#EXT-X-ENDLIST") != NULL) {
           fclose(checkFile);
           free(content);
-          (*env)->ReleaseStringUTFChars(env, playlistUrlJ, playlistUrl);
-          (*env)->ReleaseStringUTFChars(env, inputMp4PathJ, inputMp4Path);
-          (*env)->ReleaseStringUTFChars(env, tsPatternJ, tsPattern);
-          return (*env)->NewStringUTF(env, "Playlist already contains #EXT-X-ENDLIST, cannot append");
+          return "Playlist already contains #EXT-X-ENDLIST, cannot append";
         }
         free(content);
       }
@@ -98,8 +77,7 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JN
     }
   }
 
-  // Initialize FFmpeg (newer versions do not require av_register_all)
-  // Open the input MP4 file
+  // 打开输入 MP4 文件并获取流信息
   if ((ret = avformat_open_input(&ifmt_ctx, inputMp4Path, NULL, NULL)) < 0) {
     print_error("Unable to open input file", ret);
     goto end;
@@ -109,33 +87,26 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JN
     goto end;
   }
 
-  // Allocate output context using the hls muxer, with output URL specified as playlistUrl
+  // 分配输出上下文，使用 "hls" Muxer，输出目标为 playlistUrl
   ret = avformat_alloc_output_context2(&ofmt_ctx, NULL, "hls", playlistUrl);
   if (ret < 0 || !ofmt_ctx) {
     print_error("Unable to allocate output context", ret);
     goto end;
   }
 
-  // Set HLS options (to be passed to avformat_write_header)
+  // 设置 HLS 选项：分段时长、起始编号、分段文件命名模板、追加模式、不限制列表长度、事件类型
   {
     char seg_time_str[16] = {0};
     snprintf(seg_time_str, sizeof(seg_time_str), "%d", segmentDuration);
     av_dict_set(&opts, "hls_time", seg_time_str, 0);
 
-    char start_num_str[16] = {0};
-    snprintf(start_num_str, sizeof(start_num_str), "%d", sceneIndex);
-    av_dict_set(&opts, "start_number", start_num_str, 0);
-
-    // Use the provided tsPattern as the TS segment file naming template
     av_dict_set(&opts, "hls_segment_filename", tsPattern, 0);
-
-    // Set append mode, unlimited playlist, and event type (to prevent writing EXT-X-ENDLIST)
     av_dict_set(&opts, "hls_flags", "append_list", 0);
     av_dict_set(&opts, "hls_list_size", "0", 0);
     av_dict_set(&opts, "hls_playlist_type", "event", 0);
   }
 
-  // Create an output stream for each input stream (copy mode)
+  // 为每个有效输入流（视频、音频、字幕）创建对应的输出流
   stream_mapping_size = ifmt_ctx->nb_streams;
   stream_mapping = av_malloc_array(stream_mapping_size, sizeof(int));
   if (!stream_mapping) {
@@ -145,7 +116,6 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JN
   for (int i = 0, j = 0; i < ifmt_ctx->nb_streams; i++) {
     AVStream *in_stream = ifmt_ctx->streams[i];
     AVCodecParameters *in_codecpar = in_stream->codecpar;
-    // Only copy video, audio, or subtitle streams (filter as needed)
     if (in_codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
         in_codecpar->codec_type != AVMEDIA_TYPE_AUDIO &&
         in_codecpar->codec_type != AVMEDIA_TYPE_SUBTITLE) {
@@ -164,11 +134,10 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JN
       goto end;
     }
     out_stream->codecpar->codec_tag = 0;
-    // Set the time base to that of the input stream (to avoid timestamp errors)
     out_stream->time_base = in_stream->time_base;
   }
 
-  // Open the output file (if required by the output format)
+  // 打开输出文件（如果 Muxer 要求打开文件）
   if (!(ofmt_ctx->oformat->flags & AVFMT_NOFILE)) {
 #ifdef _WIN32
     int size_needed = MultiByteToWideChar(CP_UTF8, 0, playlistUrl, -1, NULL, 0);
@@ -187,25 +156,23 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JN
     }
   }
 
-  // Write the header (the output muxer will generate TS files and update the playlist based on the provided options)
+  // 写入 Muxer 文件头，启动生成 TS 分段及播放列表更新
   ret = avformat_write_header(ofmt_ctx, &opts);
   if (ret < 0) {
     print_error("Failed to write header", ret);
     goto end;
   }
 
-  // Start reading packets from the input file and writing them to the output muxer (the hls muxer automatically handles real-time segmentation)
+  // 读取输入数据包，将时间戳转换后写入输出
   while (av_read_frame(ifmt_ctx, &pkt) >= 0) {
     if (pkt.stream_index >= ifmt_ctx->nb_streams ||
         stream_mapping[pkt.stream_index] < 0) {
       av_packet_unref(&pkt);
       continue;
     }
-    // Retrieve input and output streams
     AVStream *in_stream = ifmt_ctx->streams[pkt.stream_index];
     AVStream *out_stream = ofmt_ctx->streams[stream_mapping[pkt.stream_index]];
 
-    // Convert timestamps
     pkt.pts = av_rescale_q_rnd(pkt.pts, in_stream->time_base, out_stream->time_base,
                                AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
     pkt.dts = av_rescale_q_rnd(pkt.dts, in_stream->time_base, out_stream->time_base,
@@ -222,8 +189,8 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JN
     av_packet_unref(&pkt);
   }
 
-  // Note: Not calling av_write_trailer will prevent the muxer from writing EXT-X-ENDLIST, thus allowing subsequent appending
-  // av_write_trailer(ofmt_ctx);
+  // 结束时调用 trailer（本例中依然调用 trailer 以更新播放列表，如果需要避免写入 #EXT-X-ENDLIST 可注释）
+  av_write_trailer(ofmt_ctx);
 
   end:
   if (stream_mapping)
@@ -237,16 +204,12 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitMp4ToHLS(JN
   }
   av_dict_free(&opts);
 
-  // Release JNI strings
-  (*env)->ReleaseStringUTFChars(env, playlistUrlJ, playlistUrl);
-  (*env)->ReleaseStringUTFChars(env, inputMp4PathJ, inputMp4Path);
-  (*env)->ReleaseStringUTFChars(env, tsPatternJ, tsPattern);
-
   if (ret < 0) {
-    return (*env)->NewStringUTF(env, "HLS segmentation failed");
+    return "HLS segmentation failed";
   } else {
-    char resultMsg[256] = {0};
-    snprintf(resultMsg, sizeof(resultMsg), "HLS segmentation successful: generated new segments and appended to playlist %s", playlistUrl);
-    return (*env)->NewStringUTF(env, resultMsg);
+    static char resultMsg[256];
+    snprintf(resultMsg, sizeof(resultMsg),
+             "HLS segmentation successful: generated new segments and appended to playlist %s", playlistUrl);
+    return resultMsg;
   }
 }
