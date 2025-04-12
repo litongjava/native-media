@@ -103,6 +103,22 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_finishPersistent
 JNIEXPORT jboolean JNICALL Java_com_litongjava_media_NativeMedia_merge
   (JNIEnv *, jclass, jobjectArray, jstring);
 
+/*
+ * Class:     com_litongjava_media_NativeMedia
+ * Method:    listHlsSession
+ * Signature: ()Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_listHlsSession
+  (JNIEnv *, jclass);
+
+/*
+ * Class:     com_litongjava_media_NativeMedia
+ * Method:    freeHlsSession
+ * Signature: (J)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_freeHlsSession
+  (JNIEnv *, jclass, jlong);
+
 #ifdef __cplusplus
 }
 #endif

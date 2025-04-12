@@ -22,11 +22,13 @@
 #include <libavutil/mem.h>
 #include <libavutil/samplefmt.h>
 #include <libavutil/timestamp.h>
+#include <time.h>
 
+// 内联函数：拷贝 AVChannelLayout（忽略 opaque 字段）
 inline int av_channel_layout_copy(AVChannelLayout *dst, const AVChannelLayout *src) {
   if (!dst || !src) return AVERROR(EINVAL);
   memcpy(dst, src, sizeof(*dst));
-  dst->opaque = NULL; // 简化处理，不复制opaque字段
+  dst->opaque = NULL; // 简化处理，不复制 opaque 字段
   return 0;
 }
 
@@ -38,7 +40,53 @@ typedef struct HlsSession {
   char *ts_pattern;             // TS 分段文件命名模板（深拷贝保存）
   int header_written;           // 标识是否已写 header
   AVDictionary *opts;           // 保存 HLS 配置选项
+  time_t created_time;          // 会话创建时间
+  int closed;         // 0 表示未释放，1 表示已释放
 } HlsSession;
+
+typedef struct HlsSessionNode {
+  HlsSession *session;
+  struct HlsSessionNode *next;
+} HlsSessionNode;
+
+// 全局链表头指针，用于维护所有活跃的 HLS 会话
+static HlsSessionNode *g_hlsSessionHead = NULL;
+
+// 添加一个会话到全局链表
+static void add_hls_session(HlsSession *session) {
+  HlsSessionNode *node = (HlsSessionNode *) malloc(sizeof(HlsSessionNode));
+  if (node) {
+    node->session = session;
+    node->next = g_hlsSessionHead;
+    g_hlsSessionHead = node;
+  }
+}
+
+// 从全局链表中删除一个会话
+static void remove_hls_session(HlsSession *session) {
+  HlsSessionNode **curr = &g_hlsSessionHead;
+  while (*curr) {
+    if ((*curr)->session == session) {
+      HlsSessionNode *tmp = *curr;
+      *curr = tmp->next;
+      free(tmp);
+      return;
+    }
+    curr = &((*curr)->next);
+  }
+}
+
+// 辅助函数：查找全局列表中是否存在给定的会话
+static HlsSession *find_hls_session(HlsSession *sessionPtrValue) {
+  HlsSessionNode *curr = g_hlsSessionHead;
+  while (curr) {
+    if (curr->session == sessionPtrValue) {
+      return curr->session;
+    }
+    curr = curr->next;
+  }
+  return NULL;
+}
 
 JNIEXPORT jlong JNICALL Java_com_litongjava_media_NativeMedia_initPersistentHls
   (JNIEnv *env, jclass clazz, jstring playlistUrlJ, jstring tsPatternJ, jint startNumber, jint segDuration) {
@@ -64,6 +112,8 @@ JNIEXPORT jlong JNICALL Java_com_litongjava_media_NativeMedia_initPersistentHls
     (*env)->ReleaseStringUTFChars(env, tsPatternJ, tsPattern);
     return 0;
   }
+  // 记录会话创建时间
+  session->created_time = time(NULL);
 
   // 创建输出上下文，指定 muxer 为 "hls"，目标为 playlistUrl
   AVFormatContext *ofmt_ctx = NULL;
@@ -81,10 +131,9 @@ JNIEXPORT jlong JNICALL Java_com_litongjava_media_NativeMedia_initPersistentHls
   char seg_time_str[16] = {0};
   snprintf(seg_time_str, sizeof(seg_time_str), "%d", segDuration);
   av_dict_set(&opts, "hls_time", seg_time_str, 0);
-  // 使用用户指定的 tsPattern（如 "segment_video_%03d.ts"），保证生成的分段文件名符合预期
+  // 使用用户指定的 tsPattern，例如 "segment_video_%03d.ts"
   av_dict_set(&opts, "hls_segment_filename", tsPattern, 0);
   av_dict_set(&opts, "hls_flags", "append_list", 0);
-  // 设置 hls_list_size 为 0 表示不限制条数
   av_dict_set(&opts, "hls_list_size", "0", 0);
   av_dict_set(&opts, "hls_playlist_type", "event", 0);
   char start_num_str[16] = {0};
@@ -111,6 +160,9 @@ JNIEXPORT jlong JNICALL Java_com_litongjava_media_NativeMedia_initPersistentHls
   (*env)->ReleaseStringUTFChars(env, playlistUrlJ, playlistUrl);
   (*env)->ReleaseStringUTFChars(env, tsPatternJ, tsPattern);
 
+  // 加入全局会话列表
+  add_hls_session(session);
+
   return (jlong) session;
 }
 
@@ -128,10 +180,17 @@ JNIEXPORT jlong JNICALL Java_com_litongjava_media_NativeMedia_initPersistentHls
 JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_finishPersistentHls
   (JNIEnv *env, jclass clazz, jlong sessionPtr, jstring playlistUrlJ) {
 
-  // 从 sessionPtr 恢复会话结构体
-  HlsSession *session = (HlsSession *) sessionPtr;
+  // 将 sessionPtr 转换为 HlsSession 指针
+  HlsSession *sessionInput = (HlsSession *) (uintptr_t) sessionPtr;
+  // 通过全局列表查找该会话是否还存活
+  HlsSession *session = find_hls_session(sessionInput);
   if (!session) {
-    return (*env)->NewStringUTF(env, "Invalid session pointer");
+    return (*env)->NewStringUTF(env, "Session already freed");
+  }
+
+  // 如果已经关闭，则直接返回
+  if (session->closed) {
+    return (*env)->NewStringUTF(env, "Session already freed");
   }
 
   // 从 Java 字符串中获取播放列表路径（用于返回消息）
@@ -141,20 +200,25 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_finishPersistent
   int ret = av_write_trailer(session->ofmt_ctx);
   if (ret < 0) {
     (*env)->ReleaseStringUTFChars(env, playlistUrlJ, playlistUrl);
-    // 尽管写 trailer 失败，此处也应关闭资源以避免泄漏
+    // 如果写 trailer 出错，也应关闭资源以避免泄漏
     if (!(session->ofmt_ctx->oformat->flags & AVFMT_NOFILE))
       avio_closep(&session->ofmt_ctx->pb);
     avformat_free_context(session->ofmt_ctx);
     free(session->ts_pattern);
-    free(session);
+    // 从全局列表中删除该会话
+    remove_hls_session(session);
     return (*env)->NewStringUTF(env, "Failed to write trailer");
   }
 
-  // 关闭输出文件（如有必要），释放输出上下文
+  // 关闭输出文件（如果必要），并释放输出上下文
   if (!(session->ofmt_ctx->oformat->flags & AVFMT_NOFILE))
     avio_closep(&session->ofmt_ctx->pb);
   avformat_free_context(session->ofmt_ctx);
 
+  // 从全局列表中删除该会话
+  remove_hls_session(session);
+  // 标记会话状态为已关闭，以防重复释放
+  session->closed = 1;
   // 释放会话中分配的资源
   free(session->ts_pattern);
   free(session);
@@ -167,6 +231,7 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_finishPersistent
   (*env)->ReleaseStringUTFChars(env, playlistUrlJ, playlistUrl);
   return (*env)->NewStringUTF(env, resultMsg);
 }
+
 
 JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_appendVideoSegmentToHls
   (JNIEnv *env, jclass clazz, jlong sessionPtr, jstring inputFilePathJ) {
@@ -279,7 +344,7 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_appendVideoSegme
     av_packet_unref(&pkt);
   }
 
-  // 累计更新全局时间偏移
+  // 累计更新全局时间偏移，确保下一个分段在时间上衔接
   session->global_offset += file_duration;
 
   avformat_close_input(&ifmt_ctx);
@@ -289,4 +354,69 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_appendVideoSegme
   snprintf(resultMsg, sizeof(resultMsg),
            "Appended video segment successfully, updated global offset to %lld", session->global_offset);
   return (*env)->NewStringUTF(env, resultMsg);
+}
+
+
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_listHlsSession
+  (JNIEnv *env, jclass clazz) {
+  // 构造 JSON 数组字符串，格式示例：
+  // [ {"sessionPtr":123456, "createdTime": "2025-04-12 09:30:00", "globalOffset": 1000}, {...} ]
+  char buffer[4096] = {0};
+  strcat(buffer, "[");
+
+  HlsSessionNode *curr = g_hlsSessionHead;
+  int first = 1;
+  char timeStr[64] = {0};
+  while (curr) {
+    if (!first) {
+      strcat(buffer, ",");
+    } else {
+      first = 0;
+    }
+    // 格式化创建时间为字符串
+    struct tm *tm_info = localtime(&(curr->session->created_time));
+    strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", tm_info);
+    char item[256] = {0};
+    snprintf(item, sizeof(item),
+             "{\"sessionPtr\":%llu,\"createdTime\":\"%s\",\"globalOffset\":%lld}",
+             (unsigned long long) (uintptr_t) curr->session, timeStr, curr->session->global_offset);
+    strcat(buffer, item);
+    curr = curr->next;
+  }
+  strcat(buffer, "]");
+  return (*env)->NewStringUTF(env, buffer);
+}
+
+/* 新增：直接释放 HLS 会话，不需要传递播放列表路径 */
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_freeHlsSession
+  (JNIEnv *env, jclass clazz, jlong sessionPtr) {
+  // 将 sessionPtr 转换为 HlsSession 指针
+  HlsSession *sessionInput = (HlsSession *) (uintptr_t) sessionPtr;
+  // 通过全局列表查找该会话是否还存活
+  HlsSession *session = find_hls_session(sessionInput);
+  
+  if (!session) {
+    return (*env)->NewStringUTF(env, "Invalid session pointer");
+  }
+
+  // 如果已经关闭了，直接返回
+  if (session->closed) {
+    return (*env)->NewStringUTF(env, "Session already freed");
+  }
+  // 如果输出上下文存在且打开了输出文件，则关闭输出文件
+  if (session->ofmt_ctx) {
+    if (!(session->ofmt_ctx->oformat->flags & AVFMT_NOFILE))
+      avio_closep(&session->ofmt_ctx->pb);
+    avformat_free_context(session->ofmt_ctx);
+  }
+
+  // 从全局会话列表中删除该会话
+  remove_hls_session(session);
+
+  // 释放会话结构体中分配的资源
+  if (session->ts_pattern)
+    free(session->ts_pattern);
+  free(session);
+
+  return (*env)->NewStringUTF(env, "HLS session freed successfully");
 }
