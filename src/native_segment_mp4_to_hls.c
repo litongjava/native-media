@@ -174,7 +174,7 @@ JNIEXPORT jlong JNICALL Java_com_litongjava_media_NativeMedia_initPersistentHls
  * Method:    appendMp4Segment
  * Signature: (JLjava/lang/String;)Ljava/lang/String;
  */
-JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_appendMp4Segment
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_appendVideoSegmentToHls
   (JNIEnv *env, jclass clazz, jlong sessionPtr, jstring inputFilePathJ) {
   int ret = 0;
   AVFormatContext *ifmt_ctx = NULL;

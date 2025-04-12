@@ -57,7 +57,7 @@ JNIEXPORT jobjectArray JNICALL Java_com_litongjava_media_NativeMedia_supportForm
 
 /*
  * Class:     com_litongjava_media_NativeMedia
- * Method:    splitMp4ToHLS
+ * Method:    splitVideoToHLS
  * Signature: (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)Ljava/lang/String;
  */
 JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_splitVideoToHLS
@@ -73,10 +73,10 @@ JNIEXPORT jlong JNICALL Java_com_litongjava_media_NativeMedia_initPersistentHls
 
 /*
  * Class:     com_litongjava_media_NativeMedia
- * Method:    appendMp4Segment
+ * Method:    appendVideoSegmentToHls
  * Signature: (JLjava/lang/String;)Ljava/lang/String;
  */
-JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_appendMp4Segment
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_appendVideoSegmentToHls
   (JNIEnv *, jclass, jlong, jstring);
 
 /*
@@ -94,6 +94,14 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_insertSilentSegm
  */
 JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_finishPersistentHls
   (JNIEnv *, jclass, jlong, jstring);
+
+/*
+ * Class:     com_litongjava_media_NativeMedia
+ * Method:    merge
+ * Signature: ([Ljava/lang/String;Ljava/lang/String;)Z
+ */
+JNIEXPORT jboolean JNICALL Java_com_litongjava_media_NativeMedia_merge
+  (JNIEnv *, jclass, jobjectArray, jstring);
 
 #ifdef __cplusplus
 }
