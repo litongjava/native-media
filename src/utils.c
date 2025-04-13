@@ -2,7 +2,6 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include "native_media.h"
-
 #ifdef _WIN32
 
 #include <stringapiset.h>
@@ -22,6 +21,7 @@ char *jstringToChar(JNIEnv *env, jstring jStr) {
 }
 
 #else
+#include <string.h>
 /**
  * 非 Windows 平台直接返回 UTF-8 编码的字符串
  */
