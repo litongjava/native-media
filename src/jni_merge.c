@@ -1,44 +1,13 @@
 #include "com_litongjava_media_NativeMedia.h"
+#include "native_media.h"
 #include <jni.h>
-#include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 #include <stdint.h>
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
 #include <libavutil/timestamp.h>
-#include <libavutil/error.h>
 
-#ifdef _WIN32
 
-#include <windows.h>
-#include <stringapiset.h>
-
-/**
- * 将 Java 的 jstring 转换为 UTF-8 编码的 C 字符串（支持中文路径）
- */
-char *jstringToChar(JNIEnv *env, jstring jStr) {
-  const jchar *raw = (*env)->GetStringChars(env, jStr, NULL);
-  jsize len = (*env)->GetStringLength(env, jStr);
-  int size_needed = WideCharToMultiByte(CP_UTF8, 0, (LPCWCH) raw, len, NULL, 0, NULL, NULL);
-  char *strTo = (char *) malloc(size_needed + 1);
-  WideCharToMultiByte(CP_UTF8, 0, (LPCWCH) raw, len, strTo, size_needed, NULL, NULL);
-  strTo[size_needed] = '\0';
-  (*env)->ReleaseStringChars(env, jStr, raw);
-  return strTo;
-}
-
-#else
-/**
- * 非 Windows 平台直接返回 UTF-8 编码的字符串
- */
-char* jstringToChar(JNIEnv* env, jstring jStr) {
-    const char* chars = (*env)->GetStringUTFChars(env, jStr, NULL);
-    char* copy = strdup(chars);
-    (*env)->ReleaseStringUTFChars(env, jStr, chars);
-    return copy;
-}
-#endif
 
 /*
  * 说明：

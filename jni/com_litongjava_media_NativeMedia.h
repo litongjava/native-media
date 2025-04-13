@@ -105,6 +105,14 @@ JNIEXPORT jboolean JNICALL Java_com_litongjava_media_NativeMedia_merge
 
 /*
  * Class:     com_litongjava_media_NativeMedia
+ * Method:    getVideoLength
+ * Signature: (Ljava/lang/String;)D
+ */
+JNIEXPORT jdouble JNICALL Java_com_litongjava_media_NativeMedia_getVideoLength
+  (JNIEnv *, jclass, jstring);
+
+/*
+ * Class:     com_litongjava_media_NativeMedia
  * Method:    listHlsSession
  * Signature: ()Ljava/lang/String;
  */

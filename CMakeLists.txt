@@ -49,10 +49,13 @@ include_directories(
 )
 
 # Add sourcesa
-add_library(native_media SHARED src/native_mp3_split.c src/native_mp4_to_mp3.c src/native_media_support_format.c
+add_library(native_media SHARED src/native_mp3_split.c src/native_mp4_to_mp3.c
+        src/utils.c
+        src/native_media_support_format.c
         src/native_mp3.c
         src/native_media_av_convert.c src/native_media_av_split.c src/native_video_to_hls.c
         src/jni_merge.c
+        src/jni_video_length.c
         src/pure_video_to_hls.c
         src/pure_video_segment_to_hls.c
         src/native_segment_mp4_to_hls.c)

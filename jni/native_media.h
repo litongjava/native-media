@@ -1,6 +1,8 @@
 #ifndef NATIVE_MEDIA_H
 #define NATIVE_MEDIA_H
 
+#include "jni.h"
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -50,6 +52,8 @@ int append_video_segment_to_hls(HlsSession *session, const char *inputFilePath);
  * @return 成功返回 0，失败返回负错误码
  */
 int finish_prersistent_hls(HlsSession *session);
+
+char *jstringToChar(JNIEnv *env, jstring jStr);
 
 #ifdef __cplusplus
 }
