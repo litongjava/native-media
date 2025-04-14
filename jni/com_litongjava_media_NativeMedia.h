@@ -127,6 +127,14 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_listHlsSession
 JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_freeHlsSession
   (JNIEnv *, jclass, jlong);
 
+/*
+ * Class:     com_litongjava_media_NativeMedia
+ * Method:    addWatermarkToVideo
+ * Signature: (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_addWatermarkToVideo
+  (JNIEnv *, jclass, jstring, jstring, jstring, jstring);
+
 #ifdef __cplusplus
 }
 #endif

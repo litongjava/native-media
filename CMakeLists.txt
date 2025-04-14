@@ -12,11 +12,14 @@ find_path(AVCODEC_INCLUDE_DIR libavcodec/avcodec.h)
 find_path(AVFORMAT_INCLUDE_DIR libavformat/avformat.h)
 find_path(SWRESAMPLE_INCLUDE_DIR libswresample/swresample.h)
 find_path(AVUTIL_INCLUDE_DIR libavutil/avutil.h)
+find_path(AVFILTER_INCLUDE_DIR libavfilter/avfilter.h)
+
 
 find_library(AVCODEC_LIBRARY avcodec)
 find_library(AVFORMAT_LIBRARY avformat)
 find_library(SWRESAMPLE_LIBRARY swresample)
 find_library(AVUTIL_LIBRARY avutil)
+find_library(AVFILTER_LIBRARY avfilter)
 
 # Print paths for debugging
 message(STATUS "AVCODEC_INCLUDE_DIR: ${AVCODEC_INCLUDE_DIR}")
@@ -27,6 +30,8 @@ message(STATUS "SWRESAMPLE_INCLUDE_DIR: ${SWRESAMPLE_INCLUDE_DIR}")
 message(STATUS "SWRESAMPLE_LIBRARY: ${SWRESAMPLE_LIBRARY}")
 message(STATUS "AVUTIL_INCLUDE_DIR: ${AVUTIL_INCLUDE_DIR}")
 message(STATUS "AVUTIL_LIBRARY: ${AVUTIL_LIBRARY}")
+message(STATUS "AVFILTER_INCLUDE_DIR: ${AVFILTER_INCLUDE_DIR}")
+message(STATUS "AVFILTER_LIBRARY: ${AVFILTER_LIBRARY}")
 
 # 检测操作系统类型
 if (WIN32)
@@ -45,6 +50,7 @@ include_directories(
         ${AVFORMAT_INCLUDE_DIR}
         ${SWRESAMPLE_INCLUDE_DIR}
         ${AVUTIL_INCLUDE_DIR}
+        ${AVFILTER_INCLUDE_DIR}
         jni
 )
 
@@ -56,6 +62,7 @@ add_library(native_media SHARED src/native_mp3_split.c src/native_mp4_to_mp3.c
         src/native_media_av_convert.c src/native_media_av_split.c src/native_video_to_hls.c
         src/jni_merge.c
         src/jni_video_length.c
+        src/jni_video_watermark.c
         src/pure_video_to_hls.c
         src/pure_video_segment_to_hls.c
         src/native_segment_mp4_to_hls.c)
@@ -66,7 +73,10 @@ target_link_libraries(native_media
         ${AVCODEC_LIBRARY}
         ${AVFORMAT_LIBRARY}
         ${SWRESAMPLE_LIBRARY}
-        ${AVUTIL_LIBRARY})
+        ${AVUTIL_LIBRARY}
+        ${AVFILTER_LIBRARY}
+)
+
 
 if (WIN32)
     target_link_libraries(native_media mp3lame::mp3lame)
