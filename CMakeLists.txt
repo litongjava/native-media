@@ -54,7 +54,7 @@ include_directories(
         jni
 )
 
-# Add sourcesa
+# Add sources
 add_library(native_media SHARED src/native_mp3_split.c src/native_mp4_to_mp3.c
         src/utils.c
         src/native_media_support_format.c
@@ -66,8 +66,7 @@ add_library(native_media SHARED src/native_mp3_split.c src/native_mp4_to_mp3.c
         src/pure_video_to_hls.c
         src/pure_video_segment_to_hls.c
         src/native_segment_mp4_to_hls.c
-        src/native_mp3.c
-        src/native_mp3.h)
+        src/native_mp3.c)
 
 # Link libraries
 target_link_libraries(native_media
@@ -90,10 +89,21 @@ endif ()
 
 
 # Add test executable
-add_executable(mp4_test src/mp4_test.c src/native_mp4_to_mp3.c)
-target_link_libraries(mp4_test
+add_executable(media src/native_media.c src/native_mp4_to_mp3.c src/native_mp3.c)
+target_link_libraries(media
+        ${JNI_LIBRARIES}
         ${AVCODEC_LIBRARY}
         ${AVFORMAT_LIBRARY}
         ${SWRESAMPLE_LIBRARY}
         ${AVUTIL_LIBRARY}
+        ${AVFILTER_LIBRARY}
 )
+
+
+if (WIN32)
+    target_link_libraries(media mp3lame::mp3lame)
+elseif (APPLE)
+
+elseif (UNIX)
+    target_link_libraries(media mp3lame)
+endif ()
