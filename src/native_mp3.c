@@ -1,4 +1,4 @@
-#include "com_litongjava_media_NativeMedia.h"
+#include "native_mp3.h"
 #include <jni.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,41 +12,13 @@
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
 #include <libavutil/audio_fifo.h>
+
 #ifdef _WIN32
+
 #include <stringapiset.h>
+
 #endif
-
-JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *env, jclass clazz, jstring inputPath) {
-  // 从 Java 获取输入文件路径（UTF-8 编码）
-  const char *input_file = (*env)->GetStringUTFChars(env, inputPath, NULL);
-  if (!input_file) {
-    return (*env)->NewStringUTF(env, "Error: Failed to get input file path");
-  }
-
-  // 构造输出文件名：如果输入文件名有扩展名则替换为 .mp3，否则追加 .mp3
-  char *output_file = NULL;
-  size_t input_len = strlen(input_file);
-  const char *dot = strrchr(input_file, '.');
-  if (dot != NULL) {
-    size_t base_len = dot - input_file;
-    output_file = (char *) malloc(base_len + 4 + 1); // base + ".mp3" + '\0'
-    if (!output_file) {
-      (*env)->ReleaseStringUTFChars(env, inputPath, input_file);
-      return (*env)->NewStringUTF(env, "Error: Memory allocation failed");
-    }
-    strncpy(output_file, input_file, base_len);
-    output_file[base_len] = '\0';
-    strcat(output_file, ".mp3");
-  } else {
-    output_file = (char *) malloc(input_len + 4 + 1);
-    if (!output_file) {
-      (*env)->ReleaseStringUTFChars(env, inputPath, input_file);
-      return (*env)->NewStringUTF(env, "Error: Memory allocation failed");
-    }
-    strcpy(output_file, input_file);
-    strcat(output_file, ".mp3");
-  }
-
+char *convert_to_mp3(const char *input_file, const char *output_file) {
   // 初始化各变量
   AVFormatContext *input_format_context = NULL;
   AVFormatContext *output_format_context = NULL;
@@ -180,7 +152,7 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *en
   encoder_context->sample_fmt = AV_SAMPLE_FMT_S16P; // libmp3lame 通常使用 s16p
 #if LIBAVUTIL_VERSION_MAJOR < 57
   encoder_context->channels = 2;
-    encoder_context->channel_layout = AV_CH_LAYOUT_STEREO;
+      encoder_context->channel_layout = AV_CH_LAYOUT_STEREO;
 #else
   av_channel_layout_default(&encoder_context->ch_layout, 2);
 #endif
@@ -205,7 +177,7 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *en
   }
 
   // 设置流的 time_base
-  audio_stream->time_base = (AVRational){1, encoder_context->sample_rate};
+  audio_stream->time_base = (AVRational) {1, encoder_context->sample_rate};
 
   // 创建重采样上下文
   swr_context = swr_alloc();
@@ -215,9 +187,9 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *en
   }
 #if LIBAVUTIL_VERSION_MAJOR < 57
   av_opt_set_int(swr_context, "in_channel_layout", decoder_context->channel_layout, 0);
-    av_opt_set_int(swr_context, "out_channel_layout", encoder_context->channel_layout, 0);
-    av_opt_set_int(swr_context, "in_channel_count", decoder_context->channels, 0);
-    av_opt_set_int(swr_context, "out_channel_count", encoder_context->channels, 0);
+      av_opt_set_int(swr_context, "out_channel_layout", encoder_context->channel_layout, 0);
+      av_opt_set_int(swr_context, "in_channel_count", decoder_context->channels, 0);
+      av_opt_set_int(swr_context, "out_channel_count", encoder_context->channels, 0);
 #else
   av_opt_set_chlayout(swr_context, "in_chlayout", &decoder_context->ch_layout, 0);
   av_opt_set_chlayout(swr_context, "out_chlayout", &encoder_context->ch_layout, 0);
@@ -300,11 +272,11 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *en
   output_frame->format = encoder_context->sample_fmt;
 #if LIBAVUTIL_VERSION_MAJOR < 57
   output_frame->channel_layout = encoder_context->channel_layout;
-    output_frame->channels = encoder_context->channels;
+      output_frame->channels = encoder_context->channels;
 #else
   av_channel_layout_copy(&output_frame->ch_layout, &encoder_context->ch_layout);
 #endif
-  // 设置一个默认采样数（实际将由 swr_convert 返回）
+// 设置一个默认采样数（实际将由 swr_convert 返回）
   output_frame->nb_samples = encoder_context->frame_size > 0 ? encoder_context->frame_size : 1152;
   if ((ret = av_frame_get_buffer(output_frame, 0)) < 0) {
     av_strerror(ret, error_buffer, sizeof(error_buffer));
@@ -323,6 +295,7 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *en
       }
       while (1) {
         ret = avcodec_receive_frame(decoder_context, input_frame);
+
         if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF) {
           break;
         } else if (ret < 0) {
@@ -338,10 +311,54 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *en
           goto cleanup;
         }
 
+        // 1. 已经拿到 input_frame，且 decoder_context、encoder_context 都已就绪
+        // 计算 input_frame 在输出采样率下应该对应的 sample 索引：
+        int64_t in_samples_pts = av_rescale_q(
+          input_frame->pts,
+          decoder_context->time_base,       // 解码器内部 time_base
+          (AVRational) {1, encoder_context->sample_rate}
+        );
+
+        int64_t gap = in_samples_pts - next_pts;
+        if (gap > 0) {
+          // 分配一个全 0 的 AVFrame 来表示静音
+          AVFrame *silence = av_frame_alloc();
+          if (!silence) {
+            snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate silence frame");
+            goto cleanup;
+          }
+          silence->nb_samples = gap;
+          silence->format = encoder_context->sample_fmt;
+          av_channel_layout_copy(&silence->ch_layout, &encoder_context->ch_layout);
+          if ((ret = av_frame_get_buffer(silence, 0)) < 0) {
+            av_strerror(ret, error_buffer, sizeof(error_buffer));
+            snprintf(error_buffer, sizeof(error_buffer), "Error: Could not buffer silence frame: %s", error_buffer);
+            av_frame_free(&silence);
+            goto cleanup;
+          }
+          av_frame_get_buffer(silence, 0);
+
+          // 内存清零
+          for (int ch = 0; ch < silence->ch_layout.nb_channels; ch++) {
+            memset(silence->data[ch], 0,
+                   gap * av_get_bytes_per_sample(encoder_context->sample_fmt));
+          }
+
+          // 写入 FIFO
+          av_audio_fifo_realloc(fifo, av_audio_fifo_size(fifo) + gap);
+          av_audio_fifo_write(fifo, (void **) silence->data, gap);
+
+          // 更新 pts
+          silence->pts = next_pts;
+          next_pts += gap;
+
+          av_frame_free(&silence);
+        }
+
         // 重采样转换
         int nb_samples_converted = swr_convert(swr_context,
                                                output_frame->data, output_frame->nb_samples,
-                                               (const uint8_t **)input_frame->data, input_frame->nb_samples);
+                                               (const uint8_t **) input_frame->data, input_frame->nb_samples);
         if (nb_samples_converted < 0) {
           av_strerror(nb_samples_converted, error_buffer, sizeof(error_buffer));
           snprintf(error_buffer, sizeof(error_buffer), "Error converting audio: %s", error_buffer);
@@ -350,11 +367,7 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *en
         output_frame->nb_samples = nb_samples_converted;
 
         // 将转换后的样本写入 FIFO
-        if (av_audio_fifo_realloc(fifo, av_audio_fifo_size(fifo) + nb_samples_converted) < 0) {
-          snprintf(error_buffer, sizeof(error_buffer), "Error: Could not reallocate FIFO");
-          goto cleanup;
-        }
-        if (av_audio_fifo_write(fifo, (void **)output_frame->data, nb_samples_converted) < nb_samples_converted) {
+        if (av_audio_fifo_write(fifo, (void **) output_frame->data, nb_samples_converted) < nb_samples_converted) {
           snprintf(error_buffer, sizeof(error_buffer), "Error: Could not write data to FIFO");
           goto cleanup;
         }
@@ -377,11 +390,13 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *en
 #endif
           if ((ret = av_frame_get_buffer(enc_frame, 0)) < 0) {
             av_strerror(ret, error_buffer, sizeof(error_buffer));
-            snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate buffer for encoding frame: %s", error_buffer);
+            snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate buffer for encoding frame: %s",
+                     error_buffer);
             av_frame_free(&enc_frame);
             goto cleanup;
           }
-          if (av_audio_fifo_read(fifo, (void **)enc_frame->data, encoder_context->frame_size) < encoder_context->frame_size) {
+          if (av_audio_fifo_read(fifo, (void **) enc_frame->data, encoder_context->frame_size) <
+              encoder_context->frame_size) {
             snprintf(error_buffer, sizeof(error_buffer), "Error: Could not read data from FIFO");
             av_frame_free(&enc_frame);
             goto cleanup;
@@ -444,12 +459,13 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *en
 #endif
     if ((ret = av_frame_get_buffer(enc_frame, 0)) < 0) {
       av_strerror(ret, error_buffer, sizeof(error_buffer));
-      snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate buffer for final frame: %s", error_buffer);
+      snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate buffer for final frame: %s",
+               error_buffer);
       av_frame_free(&enc_frame);
       goto cleanup;
     }
     int fifo_samples = av_audio_fifo_size(fifo);
-    if (av_audio_fifo_read(fifo, (void **)enc_frame->data, fifo_samples) < fifo_samples) {
+    if (av_audio_fifo_read(fifo, (void **) enc_frame->data, fifo_samples) < fifo_samples) {
       snprintf(error_buffer, sizeof(error_buffer), "Error: Could not read remaining data from FIFO");
       av_frame_free(&enc_frame);
       goto cleanup;
@@ -461,7 +477,8 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *en
         }
 #else
     for (int ch = 0; ch < encoder_context->ch_layout.nb_channels; ch++) {
-      memset(enc_frame->data[ch] + fifo_samples * av_get_bytes_per_sample(encoder_context->sample_fmt), 0, remaining * av_get_bytes_per_sample(encoder_context->sample_fmt));
+      memset(enc_frame->data[ch] + fifo_samples * av_get_bytes_per_sample(encoder_context->sample_fmt), 0,
+             remaining * av_get_bytes_per_sample(encoder_context->sample_fmt));
     }
 #endif
     enc_frame->pts = next_pts;
@@ -547,8 +564,5 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3(JNIEnv *en
     }
     avformat_free_context(output_format_context);
   }
-  result = (*env)->NewStringUTF(env, error_buffer);
-  (*env)->ReleaseStringUTFChars(env, inputPath, input_file);
-  if (output_file) free(output_file);
-  return result;
+  return error_buffer;
 }
