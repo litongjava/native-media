@@ -10,4 +10,5 @@
  * @param output_file       输出 MP3 的路径（UTF-8 编码）
  */
 char *convert_to_mp3(const char *input_file, const char *output_file);
+char *convert_to_mp3_for_silence(const char *input_file, const char *output_file);
 #endif //NATIVE_MEDIA_NATIVE_MP3_H

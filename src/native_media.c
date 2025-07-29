@@ -77,6 +77,29 @@ int main(int argc, char **argv) {
     free(msg);
     return 0;
 
+  } else if (strcmp(argv[1], "to_mp3_for_silence") == 0) {
+    // ------------------------------------------
+    // to_mp3 子命令逻辑：调用 convert_to_mp3 接口
+    // ------------------------------------------
+    if (argc != 4) {
+      print_usage(argv[0]);
+      return 1;
+    }
+    const char *in  = argv[2];
+    const char *out = argv[3];
+
+    printf("Converting '%s' -> '%s' …\n", in, out);
+    char *msg = convert_to_mp3_for_silence(in, out);
+    if (!msg) {
+      fprintf(stderr, "convert_to_mp3 returned NULL\n");
+      return 1;
+    }
+
+    // 输出函数返回的结果（成功是输出路径，失败是错误信息）
+    printf("%s\n", msg);
+    free(msg);
+    return 0;
+
   } else {
     // 未知子命令
     print_usage(argv[0]);
