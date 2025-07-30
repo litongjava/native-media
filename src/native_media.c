@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
       print_usage(argv[0]);
       return 1;
     }
-    const char *in  = argv[2];
+    const char *in = argv[2];
     const char *out = argv[3];
 
     printf("Converting '%s' -> '%s' …\n", in, out);
@@ -85,11 +85,11 @@ int main(int argc, char **argv) {
       print_usage(argv[0]);
       return 1;
     }
-    const char *in  = argv[2];
+    const char *in = argv[2];
     const char *out = argv[3];
 
     printf("Converting '%s' -> '%s' …\n", in, out);
-    char *msg = convert_to_mp3_for_silence(in, out);
+    char *msg = convert_to_mp3_for_silence(in, out, 0.72);
     if (!msg) {
       fprintf(stderr, "convert_to_mp3 returned NULL\n");
       return 1;
