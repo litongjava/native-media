@@ -91,7 +91,7 @@ endif ()
 
 
 # Add test executable
-add_executable(media src/native_media.c src/native_mp4_to_mp3.c src/native_mp3.c
+add_executable(media src/native_media.c src/native_mp4_to_mp3.c src/native_mp3.c src/native_mp3_for_slience.c
         src/audio_file_utils.c)
 target_link_libraries(media
         ${JNI_LIBRARIES}

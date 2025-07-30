@@ -1,7 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <math.h> // --- 新增: 引入数学库用于计算 RMS ---
+#include <math.h>
 // FFmpeg 头文件
 #include <libavformat/avformat.h>
 #include <libavcodec/avcodec.h>
@@ -9,6 +9,7 @@
 #include <libavutil/opt.h>
 #include <libavutil/channel_layout.h>
 #include <libavutil/samplefmt.h>
+
 #include <libavutil/audio_fifo.h>
 #include <libavutil/mathematics.h>
 
@@ -17,17 +18,20 @@
 #include <stringapiset.h>
 
 #endif
+
 #include "native_mp3.h"
 #include "audio_file_utils.h"
 
 #define SILENCE_THRESHOLD_LINEAR 0.0001 // noise=0.0001
 #define SILENCE_DURATION_SEC 0.1        // duration=0.1
 
+// 只负责生成静音数据并写入 fifo
+static int insert_silence_into_fifo(AVAudioFifo *fifo, int sample_rate, enum AVSampleFormat sample_fmt, int channels,
+                                    double duration_sec);
 
 // 计算单个平面 (channel) 的 RMS (Root Mean Square)
 static double calculate_rms(const uint8_t *samples, int nb_samples, enum AVSampleFormat format) {
   double sum = 0.0;
-
   switch (format) {
     case AV_SAMPLE_FMT_S16P:
     case AV_SAMPLE_FMT_S16: {
@@ -69,7 +73,6 @@ static double calculate_rms(const uint8_t *samples, int nb_samples, enum AVSampl
       // fprintf(stderr, "Unsupported sample format for RMS: %d\n", format);
       return -1.0;
   }
-
   if (nb_samples > 0) {
     return sqrt(sum / nb_samples);
   }
@@ -80,17 +83,14 @@ static double calculate_rms(const uint8_t *samples, int nb_samples, enum AVSampl
 static int is_silence_frame(AVFrame *frame, double threshold_linear) {
   double total_rms = 0.0;
   int num_channels = 0;
-
 #if LIBAVUTIL_VERSION_MAJOR >= 57
   num_channels = frame->ch_layout.nb_channels;
 #else
   num_channels = frame->channels;
 #endif
-
   if (num_channels <= 0 || frame->nb_samples <= 0) {
     return 0; // Cannot determine, assume not silence
   }
-
   // 假设输出格式是 planar (如 AV_SAMPLE_FMT_S16P)
   if (av_sample_fmt_is_planar(frame->format)) {
     for (int ch = 0; ch < num_channels; ch++) {
@@ -106,15 +106,13 @@ static int is_silence_frame(AVFrame *frame, double threshold_linear) {
     total_rms = rms; // Use the overall RMS for packed data
     // Or calculate per channel equivalent if needed
   }
-
   double avg_rms = total_rms / num_channels;
   // printf("DEBUG: Avg RMS: %f\n", avg_rms); // Debug print
   return avg_rms < threshold_linear;
 }
 
 
-
-char *convert_to_mp3_for_silence(const char *input_file, const char *output_file) {
+char *convert_to_mp3_for_silence(const char *input_file, const char *output_file, double insertion_silence_duration) {
   // 初始化各变量
   AVFormatContext *input_format_context = NULL;
   AVFormatContext *output_format_context = NULL;
@@ -129,15 +127,14 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
   AVFrame *input_frame = NULL;
   AVFrame *output_frame = NULL;
   AVAudioFifo *fifo = NULL;
+  // 移除了 insertion_fifo
   char error_buffer[1024] = {0};
   int ret = 0;
   int audio_stream_index = -1;
-
   // --- 修改 1: 移除 next_pts，使用更精确的 PTS追踪 ---
   // int64_t next_pts = 0; // 移除这个变量
   int64_t total_output_samples_written = 0; // 追踪已写入 FIFO 的总输出样本数
   int64_t next_encoding_frame_pts = 0;      // 追踪下一个编码帧的PTS (简化方法)
-
   // --- 新增: 静音检测状态变量 (调整以匹配 duration 逻辑) ---
   int is_currently_silent = 0;
   int64_t silence_start_sample = -1;
@@ -145,8 +142,8 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
   double silence_threshold_linear = SILENCE_THRESHOLD_LINEAR;
   double silence_duration_sec = SILENCE_DURATION_SEC;
   int64_t silence_duration_samples_threshold = 0; // 将在 encoder_context 初始化后设置
+  int silence_segments_detected = 0; // --- 新增: 记录检测到的静音段数量 ---
   // --- 新增结束 ---
-
   // 1. 打开输入文件
   ret = open_input_file_utf8(&input_format_context, input_file);
   if (ret < 0) {
@@ -202,7 +199,9 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
     snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate output context: %s", error_buffer);
     goto cleanup;
   }
+  // --- 修改: 明确指定编码器名称 ---
   encoder = avcodec_find_encoder_by_name("libmp3lame");
+  // --- 修改结束 ---
   if (!encoder) {
     snprintf(error_buffer, sizeof(error_buffer), "Error: Could not find libmp3lame encoder");
     goto cleanup;
@@ -220,10 +219,34 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
   // 设置编码器参数
   encoder_context->sample_rate = decoder_context->sample_rate;
   encoder_context->bit_rate = 128000;
-  encoder_context->sample_fmt = AV_SAMPLE_FMT_S16P; // libmp3lame 通常使用 s16p
+
+  // libmp3lame 通常支持 s16p, s16, fltp, flt
+  // 我们优先选择 planar 格式，因为它通常效率更高
+  const enum AVSampleFormat *sample_fmts = encoder->sample_fmts;
+  encoder_context->sample_fmt = AV_SAMPLE_FMT_NONE;
+  if (sample_fmts) {
+    for (int i = 0; sample_fmts[i] != AV_SAMPLE_FMT_NONE; i++) {
+      if (sample_fmts[i] == AV_SAMPLE_FMT_S16P) {
+        encoder_context->sample_fmt = AV_SAMPLE_FMT_S16P;
+        break;
+      }
+    }
+    // 如果没有找到 s16p，找第一个支持的
+    if (encoder_context->sample_fmt == AV_SAMPLE_FMT_NONE) {
+      encoder_context->sample_fmt = sample_fmts[0];
+    }
+  } else {
+    // 如果编码器没有声明支持的格式列表，使用默认的 s16p
+    encoder_context->sample_fmt = AV_SAMPLE_FMT_S16P;
+  }
+  if (encoder_context->sample_fmt == AV_SAMPLE_FMT_NONE) {
+    snprintf(error_buffer, sizeof(error_buffer), "Error: Could not determine suitable sample format for encoder");
+    goto cleanup;
+  }
+
 #if LIBAVUTIL_VERSION_MAJOR < 57
   encoder_context->channels = decoder_context->channels;
-    encoder_context->channel_layout = decoder_context->channel_layout;
+  encoder_context->channel_layout = decoder_context->channel_layout;
 #else
   av_channel_layout_copy(&encoder_context->ch_layout, &decoder_context->ch_layout);
 #endif
@@ -242,10 +265,8 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
   }
   // 设置输出流 time_base
   audio_stream->time_base = (AVRational) {1, encoder_context->sample_rate};
-
-  // --- 新增: 在 encoder_context 初始化后设置阈值 ---
-  silence_duration_samples_threshold = (int64_t) (silence_duration_sec * encoder_context->sample_rate);
-  // --- 新增结束 ---
+  // 在 encoder_context 初始化后设置阈值 ---
+  silence_duration_samples_threshold = (int64_t)(silence_duration_sec * encoder_context->sample_rate);
 
   // 6. 设置重采样器
   swr_context = swr_alloc();
@@ -255,9 +276,9 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
   }
 #if LIBAVUTIL_VERSION_MAJOR < 57
   av_opt_set_int(swr_context, "in_channel_layout", decoder_context->channel_layout, 0);
-    av_opt_set_int(swr_context, "out_channel_layout", encoder_context->channel_layout, 0);
-    av_opt_set_int(swr_context, "in_channel_count", decoder_context->channels, 0);
-    av_opt_set_int(swr_context, "out_channel_count", encoder_context->channels, 0);
+  av_opt_set_int(swr_context, "out_channel_layout", encoder_context->channel_layout, 0);
+  av_opt_set_int(swr_context, "in_channel_count", decoder_context->channels, 0);
+  av_opt_set_int(swr_context, "out_channel_count", encoder_context->channels, 0);
 #else
   av_opt_set_chlayout(swr_context, "in_chlayout", &decoder_context->ch_layout, 0);
   av_opt_set_chlayout(swr_context, "out_chlayout", &encoder_context->ch_layout, 0);
@@ -293,6 +314,7 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
 #else
   fifo = av_audio_fifo_alloc(encoder_context->sample_fmt, encoder_context->ch_layout.nb_channels, 1);
 #endif
+  //移除 insertion_fifo 的检查 ---
   if (!fifo) {
     snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate FIFO");
     goto cleanup;
@@ -310,7 +332,7 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
   output_frame->format = encoder_context->sample_fmt;
 #if LIBAVUTIL_VERSION_MAJOR < 57
   output_frame->channel_layout = encoder_context->channel_layout;
-    output_frame->channels = encoder_context->channels;
+  output_frame->channels = encoder_context->channels;
 #else
   av_channel_layout_copy(&output_frame->ch_layout, &encoder_context->ch_layout);
 #endif
@@ -321,14 +343,14 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
     snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate output frame buffer: %s", error_buffer);
     goto cleanup;
   }
-  // --- 修改 2: 初始化新的 PTS 变量 ---
+  // --- 初始化新的 PTS 变量 ---
   total_output_samples_written = 0;
   next_encoding_frame_pts = 0; // 初始化
-
   // --- 初始化静音检测变量 ---
   is_currently_silent = 0;
   silence_start_sample = -1;
   accumulated_silence_samples = 0;
+  silence_segments_detected = 0; // --- 新增: 初始化计数器 ---
   // --- 解码和编码主循环 ---
   // 11. 读取输入包
   while (1) {
@@ -370,7 +392,7 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
         snprintf(error_buffer, sizeof(error_buffer), "Error receiving frame from decoder: %s", error_buffer);
         goto cleanup;
       }
-      // --- 修改 3: 获取并转换输入帧的 PTS ---
+      // --- 获取并转换输入帧的 PTS ---
       int64_t input_pts = input_frame->pts;
       if (input_pts == AV_NOPTS_VALUE) {
         // 如果没有PTS，回退到基于样本计数的估算 (这可能不够准确，但比完全不用好)
@@ -388,7 +410,7 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
         // 如果转换后还是无效，回退到基于样本计数
         output_pts = total_output_samples_written;
       }
-      // --- 修改 3 结束 ---
+
       // 13. 确保 output_frame 可写
       if ((ret = av_frame_make_writable(output_frame)) < 0) {
         av_strerror(ret, error_buffer, sizeof(error_buffer));
@@ -407,10 +429,9 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
         goto cleanup;
       }
       output_frame->nb_samples = nb_samples_converted; // 更新实际转换的样本数
+      // 静音检测逻辑 (匹配 ffmpeg to_mp3_for_insert_silence duration 逻辑)
 
-      // --- 新增: 静音检测逻辑 (匹配 ffmpeg silencedetect duration 逻辑) ---
       int is_frame_silent = is_silence_frame(output_frame, silence_threshold_linear);
-
       if (is_frame_silent) {
         // 当前帧是静音
         if (!is_currently_silent) {
@@ -436,12 +457,37 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
             double silence_start_sec = (double) silence_start_sample / encoder_context->sample_rate;
             double silence_end_sec = (double) silence_end_sample / encoder_context->sample_rate;
             double silence_duration_sec_reported = silence_end_sec - silence_start_sec;
-
-            // --- 打印静音片段信息 (模仿 ffmpeg silencedetect 输出) ---
-            // 使用固定的指针值模拟地址，因为 C 中获取 filter 地址较复杂
-            printf("[silencedetect @ %p] silence_start: %.6f\n", (void *) 0x12345678, silence_start_sec);
-            printf("[silencedetect @ %p] silence_end: %.6f | silence_duration: %.6f\n", (void *) 0x12345678,
+            // --- 修改: 增加静音段计数器 ---
+            silence_segments_detected++;
+            // --- 修改: 打印静音片段信息，并根据条件插入静音 ---
+            printf("[to_mp3_for_insert_silence @ %p] silence_start: %.6f\n", (void *) 0x12345678, silence_start_sec);
+            printf("[to_mp3_for_insert_silence @ %p] silence_end: %.6f | silence_duration: %.6f\n", (void *) 0x12345678,
                    silence_end_sec, silence_duration_sec_reported);
+            // 插入静音逻辑 (忽略第一个静音段) ---
+            if (silence_segments_detected > 1) {
+              printf("[INFO @ %p] Inserting %.3f seconds of silence at %.6f\n", (void *) 0x12345678,
+                     insertion_silence_duration, silence_start_sec);
+              // --- 关键修改: 直接将静音数据写入主 fifo ---
+              ret = insert_silence_into_fifo(fifo,
+                                             encoder_context->sample_rate,
+                                             encoder_context->sample_fmt,
+#if LIBAVUTIL_VERSION_MAJOR < 57
+                encoder_context->channels,
+#else
+                                             encoder_context->ch_layout.nb_channels,
+#endif
+                                             insertion_silence_duration);
+              if (ret < 0) {
+                snprintf(error_buffer, sizeof(error_buffer), "Error inserting silence into main FIFO");
+                av_frame_unref(input_frame);
+                goto cleanup;
+              }
+              // 更新追踪的样本数和PTS
+              int64_t inserted_samples = (int64_t)(insertion_silence_duration * encoder_context->sample_rate);
+              total_output_samples_written += inserted_samples;
+              next_encoding_frame_pts += inserted_samples; // Simplified PTS update
+            }
+
             // --- 打印结束 ---
           } else {
             // 静音时间太短，不报告
@@ -456,47 +502,46 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
         }
         // 如果本来就不在静音状态，则无需操作
       }
-      // --- 新增结束 ---
 
-      // --- 修改 4: 更新总输出样本数 (在写入FIFO之前) ---
+      // 更新总输出样本数 (在写入FIFO之前) ---
       total_output_samples_written += nb_samples_converted;
-      // --- 修改 4 结束 ---
-      // 15. 将转换后的样本写入 FIFO
+
+      // 15. 将转换后的样本写入主 FIFO
       if (av_audio_fifo_write(fifo, (void **) output_frame->data, nb_samples_converted) < nb_samples_converted) {
-        snprintf(error_buffer, sizeof(error_buffer), "Error: Could not write data to FIFO");
+        snprintf(error_buffer, sizeof(error_buffer), "Error: Could not write data to main FIFO");
         av_frame_unref(input_frame);
         goto cleanup;
       }
-      // --- 移除旧的 next_pts 累加逻辑 ---
-      // int64_t frame_duration = av_rescale_q(input_frame->nb_samples, ...);
-      // next_pts += frame_duration;
-      // --- 移除结束 ---
-      av_frame_unref(input_frame); // 处理完立即释放
-      // 17. 当 FIFO 中样本足够构成一帧时，从 FIFO 中读取固定数量样本送编码器
+
+      av_frame_unref(input_frame);
+
+      // 17. 当主 FIFO 中样本足够构成一帧时，从主 FIFO 中读取固定数量样本送编码器
+      // --- 关键修改: 只处理完整的 frame_size 帧 ---
       while (av_audio_fifo_size(fifo) >= encoder_context->frame_size) {
         AVFrame *enc_frame = av_frame_alloc();
         if (!enc_frame) {
-          snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate encoding frame");
+          snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate main encoding frame");
           goto cleanup;
         }
         enc_frame->nb_samples = encoder_context->frame_size;
         enc_frame->format = encoder_context->sample_fmt;
 #if LIBAVUTIL_VERSION_MAJOR < 57
         enc_frame->channel_layout = encoder_context->channel_layout;
-                enc_frame->channels = encoder_context->channels;
+        enc_frame->channels = encoder_context->channels;
 #else
         av_channel_layout_copy(&enc_frame->ch_layout, &encoder_context->ch_layout);
 #endif
+        // --- 关键修改: 使用 align=0 允许分配标准大小的帧缓冲区 ---
         if ((ret = av_frame_get_buffer(enc_frame, 0)) < 0) {
           av_strerror(ret, error_buffer, sizeof(error_buffer));
-          snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate buffer for encoding frame: %s",
+          snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate buffer for main encoding frame: %s",
                    error_buffer);
           av_frame_free(&enc_frame);
           goto cleanup;
         }
         if (av_audio_fifo_read(fifo, (void **) enc_frame->data, encoder_context->frame_size) <
             encoder_context->frame_size) {
-          snprintf(error_buffer, sizeof(error_buffer), "Error: Could not read data from FIFO");
+          snprintf(error_buffer, sizeof(error_buffer), "Error: Could not read data from main FIFO");
           av_frame_free(&enc_frame);
           goto cleanup;
         }
@@ -507,7 +552,7 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
         ret = avcodec_send_frame(encoder_context, enc_frame);
         if (ret < 0) {
           av_strerror(ret, error_buffer, sizeof(error_buffer));
-          snprintf(error_buffer, sizeof(error_buffer), "Error sending frame to encoder: %s", error_buffer);
+          snprintf(error_buffer, sizeof(error_buffer), "Error sending main frame to encoder: %s", error_buffer);
           av_frame_free(&enc_frame);
           goto cleanup;
         }
@@ -523,7 +568,6 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
             goto cleanup;
           }
           output_packet->stream_index = 0;
-          // 编码器的 time_base 通常与流的 time_base 相同或相关
           av_packet_rescale_ts(output_packet,
                                encoder_context->time_base,
                                output_format_context->streams[0]->time_base);
@@ -537,79 +581,153 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
           av_packet_unref(output_packet);
         }
       }
-    } // End of receive frame loop
-  } // End of read packet loop
-  flush_encoder:
+    }
+  }
 
-  // --- 新增: 处理文件末尾可能存在的静音 (如果满足 duration 条件) ---
+  flush_encoder:
+  // 处理文件末尾可能存在的静音 (如果满足 duration 条件) ---
   if (is_currently_silent && accumulated_silence_samples >= silence_duration_samples_threshold) {
     // 文件以满足 duration 条件的静音结束
     int64_t silence_end_sample = total_output_samples_written; // 结束于文件末尾
     double silence_start_sec = (double) silence_start_sample / encoder_context->sample_rate;
     double silence_end_sec = (double) silence_end_sample / encoder_context->sample_rate;
     double silence_duration_sec_reported = silence_end_sec - silence_start_sec;
-
+    // 增加静音段计数器 (即使在文件末尾) ---
+    silence_segments_detected++;
     // --- 打印文件末尾的静音片段信息 ---
-    printf("[silencedetect @ %p] silence_start: %.6f\n", (void *) 0x12345678, silence_start_sec);
-    printf("[silencedetect @ %p] silence_end: %.6f | silence_duration: %.6f\n", (void *) 0x12345678, silence_end_sec,
+    printf("[to_mp3_for_insert_silence @ %p] silence_start: %.6f\n", (void *) 0x12345678, silence_start_sec);
+    printf("[to_mp3_for_insert_silence @ %p] silence_end: %.6f | silence_duration: %.6f\n", (void *) 0x12345678,
+           silence_end_sec,
            silence_duration_sec_reported);
-    // --- 打印结束 ---
-  }
-  // --- 新增结束 ---
+    // 插入静音逻辑 (忽略第一个静音段，即使在文件末尾) ---
+    if (silence_segments_detected > 1) {
+      printf("[INFO @ %p] Inserting %.3f seconds of silence at %.6f (end of file)\n", (void *) 0x12345678,
+             insertion_silence_duration, silence_start_sec);
+      // 直接将静音数据写入主 fifo ---
+      ret = insert_silence_into_fifo(fifo,
+                                     encoder_context->sample_rate,
+                                     encoder_context->sample_fmt,
+#if LIBAVUTIL_VERSION_MAJOR < 57
+        encoder_context->channels,
+#else
+                                     encoder_context->ch_layout.nb_channels,
+#endif
+                                     insertion_silence_duration);
+      if (ret < 0) {
+        snprintf(error_buffer, sizeof(error_buffer), "Error inserting silence into main FIFO (end of file)");
+        goto cleanup;
+      }
+      // 更新追踪的样本数和PTS
+      int64_t inserted_samples = (int64_t)(insertion_silence_duration * encoder_context->sample_rate);
+      total_output_samples_written += inserted_samples;
+      next_encoding_frame_pts += inserted_samples; // Simplified PTS update
+    }
 
-  // --- 修改 6: 正确处理 FIFO 中剩余样本 ---
-  // 处理 FIFO 中剩余不足一帧的样本
+  }
+
+  // 正确处理主 FIFO 中剩余样本 ---
+  // 处理主 FIFO 中剩余不足一帧的样本 (这将是最后一帧)
   while (av_audio_fifo_size(fifo) > 0) {
     int remaining_samples = av_audio_fifo_size(fifo);
     // 读取所有剩余样本，即使少于一帧
     int samples_to_read = remaining_samples;
     AVFrame *enc_frame = av_frame_alloc();
     if (!enc_frame) {
-      snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate final encoding frame");
+      snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate final main encoding frame");
       goto cleanup;
     }
     enc_frame->nb_samples = samples_to_read;
     enc_frame->format = encoder_context->sample_fmt;
 #if LIBAVUTIL_VERSION_MAJOR < 57
     enc_frame->channel_layout = encoder_context->channel_layout;
-        enc_frame->channels = encoder_context->channels;
+    enc_frame->channels = encoder_context->channels;
 #else
     av_channel_layout_copy(&enc_frame->ch_layout, &encoder_context->ch_layout);
 #endif
     // Use av_frame_get_buffer with align=0 for potentially non-standard nb_samples
+    // 使用 align=0 允许分配非标准大小的帧 ---
     if ((ret = av_frame_get_buffer(enc_frame, 0)) < 0) {
       av_strerror(ret, error_buffer, sizeof(error_buffer));
-      snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate buffer for final frame: %s",
+      snprintf(error_buffer, sizeof(error_buffer), "Error: Could not allocate buffer for final main frame: %s",
                error_buffer);
       av_frame_free(&enc_frame);
       goto cleanup;
     }
     if (av_audio_fifo_read(fifo, (void **) enc_frame->data, samples_to_read) < samples_to_read) {
-      snprintf(error_buffer, sizeof(error_buffer), "Error: Could not read final data from FIFO");
+      snprintf(error_buffer, sizeof(error_buffer), "Error: Could not read final data from main FIFO");
       av_frame_free(&enc_frame);
       goto cleanup;
     }
-    // --- 修改 7: 为最后的帧分配正确的 PTS ---
+    // 为最后的帧分配正确的 PTS ---
     enc_frame->pts = next_encoding_frame_pts; // 使用追踪到的PTS
     next_encoding_frame_pts += samples_to_read; // 更新 (虽然循环会结束，但保持逻辑一致)
-    // --- 修改 7 结束 ---
+    // 发送最后一帧到编码器
     ret = avcodec_send_frame(encoder_context, enc_frame);
-    if (ret < 0 && ret != AVERROR_EOF) {
+    if (ret < 0) {
       av_strerror(ret, error_buffer, sizeof(error_buffer));
-      snprintf(error_buffer, sizeof(error_buffer), "Error sending final frame to encoder: %s", error_buffer);
-      av_frame_free(&enc_frame);
-      goto cleanup;
+      // 区分错误类型 ---
+      if (ret == AVERROR(EINVAL)) {
+        // EINVAL 通常表示帧大小不合规，但对于最后一帧，某些编码器可能仍能处理
+        // 或者是编码器状态问题。我们记录警告但尝试继续冲刷。
+        fprintf(stderr,
+                "Warning: Encoder reported EINVAL for final frame (size %d). This might be expected for the last frame. Proceeding to flush.\n",
+                samples_to_read);
+        // 不要立即 goto cleanup，继续执行 flush
+      } else {
+        snprintf(error_buffer, sizeof(error_buffer), "Error sending final main frame to encoder: %s", error_buffer);
+        av_frame_free(&enc_frame);
+        goto cleanup;
+      }
     }
-    av_frame_free(&enc_frame);
+    av_frame_free(&enc_frame); // 无论是否成功发送，都释放帧
+
+    // 尝试接收可能的编码数据包 ---
     while (1) {
       ret = avcodec_receive_packet(encoder_context, output_packet);
       if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
         break;
       else if (ret < 0) {
         av_strerror(ret, error_buffer, sizeof(error_buffer));
-        snprintf(error_buffer, sizeof(error_buffer), "Error receiving final packet from encoder: %s", error_buffer);
-        goto cleanup;
+        // 对于最后一帧，接收错误可能也是预期的，记录警告 ---
+        fprintf(stderr, "Warning: Error receiving final packet from encoder: %s\n", error_buffer);
+        break; // 不中断主流程
       }
+      if (ret == 0) { // 成功接收到包
+        output_packet->stream_index = 0;
+        av_packet_rescale_ts(output_packet,
+                             encoder_context->time_base,
+                             output_format_context->streams[0]->time_base);
+        ret = av_interleaved_write_frame(output_format_context, output_packet);
+        if (ret < 0) {
+          av_strerror(ret, error_buffer, sizeof(error_buffer));
+          fprintf(stderr, "Warning: Error writing final packet: %s\n", error_buffer);
+        }
+        av_packet_unref(output_packet);
+      }
+    }
+  }
+
+  // 20. 冲刷编码器（发送 NULL 帧）
+  // 确保冲刷逻辑健壮 ---
+  ret = avcodec_send_frame(encoder_context, NULL);
+  if (ret < 0) {
+    av_strerror(ret, error_buffer, sizeof(error_buffer));
+    fprintf(stderr, "Warning: Error sending flush frame (NULL) to encoder: %s\n", error_buffer);
+    // 不立即 goto cleanup, 继续尝试接收剩余数据包
+  }
+
+  // 接收冲刷过程中产生的所有数据包
+  while (1) {
+    ret = avcodec_receive_packet(encoder_context, output_packet);
+    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
+      break;
+    else if (ret < 0) {
+      av_strerror(ret, error_buffer, sizeof(error_buffer));
+      // 冲刷接收错误通常不是致命错误，记录警告 ---
+      fprintf(stderr, "Warning: Error receiving flushed packet from encoder: %s\n", error_buffer);
+      break; // 不中断主流程
+    }
+    if (ret == 0) { // 成功接收到包
       output_packet->stream_index = 0;
       av_packet_rescale_ts(output_packet,
                            encoder_context->time_base,
@@ -617,43 +735,12 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
       ret = av_interleaved_write_frame(output_format_context, output_packet);
       if (ret < 0) {
         av_strerror(ret, error_buffer, sizeof(error_buffer));
-        snprintf(error_buffer, sizeof(error_buffer), "Error writing final packet: %s", error_buffer);
-        av_packet_unref(output_packet);
-        goto cleanup;
+        fprintf(stderr, "Warning: Error writing flushed packet: %s\n", error_buffer);
       }
       av_packet_unref(output_packet);
     }
   }
-  // --- 修改 6 结束 ---
-  // 20. 冲刷编码器（发送 NULL 帧）
-  ret = avcodec_send_frame(encoder_context, NULL);
-  if (ret < 0 && ret != AVERROR_EOF) {
-    av_strerror(ret, error_buffer, sizeof(error_buffer));
-    snprintf(error_buffer, sizeof(error_buffer), "Error flushing encoder (send NULL): %s", error_buffer);
-    goto cleanup;
-  }
-  while (1) {
-    ret = avcodec_receive_packet(encoder_context, output_packet);
-    if (ret == AVERROR(EAGAIN) || ret == AVERROR_EOF)
-      break;
-    else if (ret < 0) {
-      av_strerror(ret, error_buffer, sizeof(error_buffer));
-      snprintf(error_buffer, sizeof(error_buffer), "Error flushing encoder (receive): %s", error_buffer);
-      goto cleanup;
-    }
-    output_packet->stream_index = 0;
-    av_packet_rescale_ts(output_packet,
-                         encoder_context->time_base,
-                         output_format_context->streams[0]->time_base);
-    ret = av_interleaved_write_frame(output_format_context, output_packet);
-    if (ret < 0) {
-      av_strerror(ret, error_buffer, sizeof(error_buffer));
-      snprintf(error_buffer, sizeof(error_buffer), "Error writing flushed packet: %s", error_buffer);
-      av_packet_unref(output_packet);
-      goto cleanup;
-    }
-    av_packet_unref(output_packet);
-  }
+
   // 21. 写文件尾
   if ((ret = av_write_trailer(output_format_context)) < 0) {
     av_strerror(ret, error_buffer, sizeof(error_buffer));
@@ -674,6 +761,7 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
   if (encoder_context) avcodec_free_context(&encoder_context);
   if (swr_context) swr_free(&swr_context);
   if (fifo) av_audio_fifo_free(fifo);
+  // if (insertion_fifo) av_audio_fifo_free(insertion_fifo); // --- 移除 ---
   if (input_format_context) avformat_close_input(&input_format_context);
   if (output_format_context) {
     if (!(output_format_context->oformat->flags & AVFMT_NOFILE) && output_format_context->pb) {
@@ -681,10 +769,63 @@ char *convert_to_mp3_for_silence(const char *input_file, const char *output_file
     }
     avformat_free_context(output_format_context);
   }
+
   // Return a copy of the error message or output path
   char *result = malloc(strlen(error_buffer) + 1);
   if (result) {
     strcpy(result, error_buffer);
   }
   return result;
+}
+
+// 它现在只负责将指定时长的静音样本放入给定的 fifo
+static int insert_silence_into_fifo(AVAudioFifo *fifo, int sample_rate, enum AVSampleFormat sample_fmt, int channels,
+                                    double duration_sec) {
+  if (!fifo) {
+    return AVERROR(EINVAL);
+  }
+  int64_t samples_to_insert = (int64_t)(duration_sec * sample_rate);
+  if (samples_to_insert <= 0) {
+    return 0; // Nothing to insert
+  }
+  int bytes_per_sample = av_get_bytes_per_sample(sample_fmt);
+  if (bytes_per_sample <= 0) {
+    return AVERROR(EINVAL);
+  }
+  uint8_t **silence_data = NULL;
+  int is_planar = av_sample_fmt_is_planar(sample_fmt);
+  int num_planes = is_planar ? channels : 1;
+  silence_data = av_calloc(num_planes, sizeof(*silence_data));
+  if (!silence_data) {
+    return AVERROR(ENOMEM);
+  }
+  for (int i = 0; i < num_planes; i++) {
+    silence_data[i] = av_malloc(samples_to_insert * bytes_per_sample);
+    if (!silence_data[i]) {
+      for (int j = 0; j < i; j++) {
+        av_free(silence_data[j]);
+      }
+      av_free(silence_data);
+      return AVERROR(ENOMEM);
+    }
+    // 填充静音数据 (0)
+    // 注意：对于有符号整数格式，0 代表静音。对于浮点格式，0.0 也代表静音。
+    memset(silence_data[i], 0, samples_to_insert * bytes_per_sample);
+  }
+  // 将静音数据写入 FIFO
+  int written_samples = av_audio_fifo_write(fifo, (void **) silence_data, samples_to_insert);
+  if (written_samples != samples_to_insert) {
+    // Cleanup on error
+    for (int i = 0; i < num_planes; i++) {
+      av_free(silence_data[i]);
+    }
+    av_free(silence_data);
+    return AVERROR(EIO);
+  }
+  // Cleanup temporary buffers
+  for (int i = 0; i < num_planes; i++) {
+    av_free(silence_data[i]);
+  }
+  av_free(silence_data);
+  return 0; // Success
 }
