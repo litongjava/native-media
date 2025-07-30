@@ -33,6 +33,14 @@ JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3
 
 /*
  * Class:     com_litongjava_media_NativeMedia
+ * Method:    toMp3ForSilence
+ * Signature: (Ljava/lang/String;D)Ljava/lang/String;
+ */
+JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_toMp3ForSilence
+  (JNIEnv *, jclass, jstring, jdouble);
+
+/*
+ * Class:     com_litongjava_media_NativeMedia
  * Method:    convertTo
  * Signature: (Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
  */
