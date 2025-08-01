@@ -18,17 +18,6 @@
 
 #include <stdint.h>
 
-#ifndef av_get_channel_layout_nb_channels
-static inline int av_get_channel_layout_nb_channels(uint64_t channel_layout) {
-  int count = 0;
-  while (channel_layout) {
-    count += channel_layout & 1;
-    channel_layout >>= 1;
-  }
-  return count;
-}
-#endif
-
 
 JNIEXPORT jstring JNICALL Java_com_litongjava_media_NativeMedia_mp4ToMp3(JNIEnv *env, jclass clazz, jstring inputPath) {
   // 将 Java 字符串转换为 C 字符串
