@@ -78,6 +78,7 @@ target_link_libraries(native_media
         ${SWRESAMPLE_LIBRARY}
         ${AVUTIL_LIBRARY}
         ${AVFILTER_LIBRARY}
+        m
 )
 
 
@@ -100,6 +101,7 @@ target_link_libraries(media
         ${SWRESAMPLE_LIBRARY}
         ${AVUTIL_LIBRARY}
         ${AVFILTER_LIBRARY}
+        m
 )
 
 
