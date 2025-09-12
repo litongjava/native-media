@@ -55,6 +55,15 @@ int finish_prersistent_hls(HlsSession *session);
 
 char *jstringToChar(JNIEnv *env, jstring jStr);
 
+
+/**
+ * 返回 0 成功，其它为 FFmpeg 错误码
+ * @param inputPath
+ * @param outputPath
+ * @return
+ */
+int save_last_frame_c(const char *inputPath, const char *outputPath);
+
 #ifdef __cplusplus
 }
 #endif

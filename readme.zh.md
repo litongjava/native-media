@@ -35,6 +35,8 @@
 ```
 media to_mp3 tts-kokoro-en.wav tts-kokoro-en.mp3
 media to_mp3 539850349333278720.mp4 539850349333278720.mp3
+media save_last_frame 539850349333278720.mp4 539850349333278720.png
+
 ```
 ## 注意事项
 

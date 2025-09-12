@@ -4,6 +4,7 @@
 #include <libavcodec/avcodec.h>
 #include <libavutil/opt.h>
 #include "native_mp3.h"
+#include "native_media.h"
 
 static void print_usage(const char *prog) {
   fprintf(stderr,
@@ -13,6 +14,11 @@ static void print_usage(const char *prog) {
           "  %s to_mp3 <input.mp4> <output.mp3>\n"
           "      Convert input.mp4 to output.mp3 via convert_to_mp3().\n",
           prog, prog);
+}
+
+static void err2str(int errnum, char *buf, size_t buflen) {
+  if (!buf || buflen == 0) return;
+  av_strerror(errnum, buf, buflen);
 }
 
 int main(int argc, char **argv) {
@@ -99,7 +105,23 @@ int main(int argc, char **argv) {
     printf("%s\n", msg);
     free(msg);
     return 0;
+  } else if (strcmp(argv[1], "save_last_frame") == 0) {
+    if (argc < 4) {
+      fprintf(stderr, "Usage: %s save_last_frame <input_video> <output_png>\n", argv[0]);
+      return 2;
+    }
+    const char *in = argv[2];
+    const char *out = argv[3];
 
+    int rc = save_last_frame_c(in, out);
+    if (rc == 0) {
+      printf("OK: wrote last frame to %s\n", out);
+    } else {
+      char buf[256];
+      err2str(rc, buf, sizeof(buf));
+      fprintf(stderr, "FAIL (%d): %s\n", rc, buf);
+    }
+    return rc ? 1 : 0;
   } else {
     // 未知子命令
     print_usage(argv[0]);
