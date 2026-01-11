@@ -72,11 +72,12 @@ add_library(native_media SHARED
         src/jni_video_watermark.c
         src/pure_video_to_hls.c
         src/pure_video_segment_to_hls.c
-        src/native_segment_mp4_to_hls.c
+        src/jni_segment_mp4_to_hls.c
         src/native_mp3.c
         src/native_mp3_for_slience.c
         src/audio_file_utils.c
-        src/jni_video_last_frame.c)
+        src/jni_video_last_frame.c
+        src/native_hls.c)
 
 # Link libraries
 # 注意：在 GNU ld 下库顺序很重要：把“依赖者在前，被依赖库在后”
@@ -101,12 +102,14 @@ endif ()
 
 # Add test executable
 add_executable(media
-        src/native_media.c
+        src/media.c
         src/native_mp4_to_mp3.c
         src/native_mp3.c
         src/native_mp3_for_slience.c
         src/audio_file_utils.c
-        src/jni_video_last_frame.c)
+        src/jni_video_last_frame.c
+        src/pure_video_segment_to_hls.c
+        src/native_hls.c)
 
 target_link_libraries(media
         ${JNI_LIBRARIES}

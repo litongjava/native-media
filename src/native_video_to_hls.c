@@ -1,7 +1,7 @@
 #include "com_litongjava_media_NativeMedia.h"
 #include <jni.h>
 #include <stdlib.h>
-#include "native_media.h"
+#include "media.h"
 
 // 声明纯 C 接口函数（如果 pure_mp4_to_hls.c 已经编译为库，可以通过头文件包含）
 const char *split_mp4_to_hls(const char *playlistUrl, const char *inputMp4Path,
