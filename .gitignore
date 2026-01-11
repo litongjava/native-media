@@ -1,4 +1,4 @@
-### Eclipse template
+hls### Eclipse template
 *.pydevproject
 .metadata
 .gradle*
@@ -157,3 +157,5 @@ vcpkg_installed/
 app.zip
 cmake-build-release/
 samples/
+videos/
+hls/
