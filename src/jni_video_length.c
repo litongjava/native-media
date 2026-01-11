@@ -1,5 +1,5 @@
 #include "com_litongjava_media_NativeMedia.h"
-#include "media.h"
+#include "native_media.h"
 #include <jni.h>
 #include <stdio.h>
 #include <stdlib.h>

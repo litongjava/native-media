@@ -1,4 +1,4 @@
-#include "media.h"
+#include "native_media.h"
 #include <libavutil/avutil.h>
 #include <libavutil/timestamp.h>
 

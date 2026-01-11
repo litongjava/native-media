@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
-#include "media.h"
+#include "native_media.h"
 
 #ifdef _WIN32
 

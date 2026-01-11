@@ -5,7 +5,7 @@
 #include <libavcodec/avcodec.h>
 #include <libavutil/opt.h>
 #include "native_mp3.h"
-#include "media.h"
+#include "native_media.h"
 
 static void print_usage(const char *prog) {
   fprintf(stderr,

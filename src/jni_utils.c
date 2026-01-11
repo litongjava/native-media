@@ -1,7 +1,7 @@
 #include <jni.h>
 #include <stdlib.h>
 #include <stdint.h>
-#include "media.h"
+#include "native_media.h"
 #ifdef _WIN32
 
 #include <stringapiset.h>

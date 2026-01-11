@@ -8,7 +8,7 @@
 #include <libavformat/avformat.h>
 #include <libavutil/avutil.h>
 #include <libavutil/opt.h>
-#include "media.h"
+#include "native_media.h"
 
 #ifdef _WIN32
 
